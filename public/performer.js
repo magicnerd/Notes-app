@@ -17,6 +17,8 @@ let reconnectTimer;
 let lastNote = localStorage.getItem('lastNote') || prefillInput.value;
 let isBlack = false;
 let assistantOnline = false;
+let mediaRecorder;
+let fallbackMimeType = '';
 
 roomInput.value = localStorage.getItem('room') || Math.random().toString(36).slice(2, 8);
 prefillInput.value = lastNote;
@@ -78,7 +80,10 @@ async function createOffer() {
   closePeer();
 
   pc = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
+    ]
   });
 
   for (const track of localStream.getAudioTracks()) {
@@ -100,6 +105,55 @@ async function createOffer() {
   const offer = await pc.createOffer({ offerToReceiveAudio: false });
   await pc.setLocalDescription(offer);
   ws.send(JSON.stringify({ type: 'webrtc-offer', offer }));
+}
+
+function startFallbackAudioStream() {
+  if (!window.MediaRecorder || !localStream || mediaRecorder) return;
+
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/aac'
+  ];
+
+  fallbackMimeType = candidates.find(type => {
+    try { return MediaRecorder.isTypeSupported(type); } catch { return false; }
+  }) || '';
+
+  try {
+    mediaRecorder = fallbackMimeType
+      ? new MediaRecorder(localStream, { mimeType: fallbackMimeType })
+      : new MediaRecorder(localStream);
+
+    mediaRecorder.addEventListener('dataavailable', async (event) => {
+      if (!event.data || event.data.size === 0) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+      const buffer = await event.data.arrayBuffer();
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+
+      ws.send(JSON.stringify({
+        type: 'audio-chunk',
+        mimeType: event.data.type || fallbackMimeType || 'audio/mp4',
+        data: btoa(binary)
+      }));
+    });
+
+    // 1200ms keeps latency reasonable without hammering the server.
+    mediaRecorder.start(1200);
+  } catch (err) {
+    mediaRecorder = null;
+  }
+}
+
+function stopFallbackAudioStream() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    try { mediaRecorder.stop(); } catch {}
+  }
+  mediaRecorder = null;
 }
 
 function closePeer() {
@@ -148,6 +202,7 @@ armBtn.addEventListener('click', async () => {
     });
 
     connectSocket();
+    startFallbackAudioStream();
     consent.classList.add('hidden');
     notesApp.classList.remove('hidden');
 
@@ -188,5 +243,6 @@ blackout.addEventListener('click', exitBlackout);
 
 window.addEventListener('beforeunload', () => {
   closePeer();
+  stopFallbackAudioStream();
   if (localStream) localStream.getTracks().forEach(t => t.stop());
 });

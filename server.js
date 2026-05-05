@@ -42,7 +42,7 @@ function getRoom(roomId) {
 }
 
 function send(ws, payload) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
 }
 
 function broadcast(room, payload, except = null) {
@@ -113,12 +113,23 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // WebRTC signalling. We do not inspect the SDP/candidates, just relay them.
+    // WebRTC signalling. We do not inspect SDP/candidates, just relay them.
     if (['webrtc-offer', 'webrtc-answer', 'webrtc-candidate', 'audio-ready', 'audio-ended'].includes(msg.type)) {
       const target = ws.role === 'performer' ? room.assistant : room.performer;
-      if (target && target.readyState === WebSocket.OPEN) {
-        send(target, { ...msg, from: ws.role });
-      }
+      send(target, { ...msg, from: ws.role });
+      return;
+    }
+
+    // Fallback audio path: performer sends short MediaRecorder chunks via WebSocket.
+    if (msg.type === 'audio-chunk' && ws.role === 'performer') {
+      const target = room.assistant;
+      if (!target || target.readyState !== WebSocket.OPEN) return;
+      if (typeof msg.data !== 'string' || msg.data.length > 750000) return;
+      send(target, {
+        type: 'audio-chunk',
+        mimeType: String(msg.mimeType || 'audio/mp4').slice(0, 100),
+        data: msg.data
+      });
       return;
     }
   });

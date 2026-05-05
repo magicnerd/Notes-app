@@ -9,10 +9,13 @@ label { display: grid; gap: 6px; margin: 12px 0; color: #c9c9c9; }
 input, textarea { width: 100%; border: 1px solid #333; border-radius: 12px; background: #0c0c0c; color: #fff; font: 16px var(--font); padding: 12px; }
 button { border: 0; border-radius: 12px; background: #f2c94c; color: #111; font: 700 15px var(--font); padding: 12px 14px; }
 .small-btn { padding: 9px 11px; background: #333; color: #eee; }
+.audio-btn { width: 100%; margin: 12px 0 4px; }
 .status { margin: 8px 0 0; color: #aaa; font-size: 14px; }
+.debug { margin: 4px 0 0; color: #8e8e8e; font-size: 12px; }
 .connected { color: #80ff9f; }
 .disconnected { color: #ff8c8c; }
 .top-row { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-audio { width: 100%; margin: 14px 0; }
-#noteEditor { height: min(62dvh, 620px); resize: vertical; line-height: 1.35; }
+audio { width: 100%; margin: 10px 0; }
+#fallbackAudio { opacity: .92; }
+#noteEditor { height: min(56dvh, 570px); resize: vertical; line-height: 1.35; }
 .hint { color: #aaa; font-size: 13px; margin-bottom: 0; }

@@ -21,13 +21,16 @@
         <div>
           <h1>Live Note</h1>
           <p id="status" class="status disconnected">Disconnected</p>
+          <p id="audioDebug" class="debug">Audio not enabled yet.</p>
         </div>
         <button id="reconnectAudioBtn" class="small-btn">Reconnect audio</button>
       </div>
 
+      <button id="enableAudioBtn" class="audio-btn">Enable Audio</button>
       <audio id="remoteAudio" autoplay playsinline controls></audio>
+      <audio id="fallbackAudio" playsinline controls></audio>
       <textarea id="noteEditor" spellcheck="false"></textarea>
-      <p class="hint">Edits sync immediately to the performer screen.</p>
+      <p class="hint">Edits sync immediately to the performer screen. Use Enable Audio once after opening this page.</p>
     </section>
   </main>
 
