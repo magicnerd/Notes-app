@@ -1,29 +1,15 @@
-# Notes Private Call App
+# Notes Performance App, WebSocket Audio Version
 
-A Render-ready Node app with:
+This version uses WebSockets for both:
 
-- iOS Notes style dark performer UI
-- private helper page at `/helper`
 - live note syncing
-- one-way WebRTC audio call from performer to helper
-- explicit performer consent before microphone access
-- PWA support for iPhone Add to Home Screen
+- one-way microphone audio from performer to helper
 
-## Local run
-
-```bash
-npm install
-npm start
-```
-
-Open:
-
-- Performer: http://localhost:3000
-- Helper: http://localhost:3000/helper
+It does **not** use WebRTC, so it avoids the call/ICE/TURN problems from the previous build.
 
 ## Render
 
-Use the same existing Render Web Service.
+Keep the same Render web service.
 
 Build command:
 
@@ -43,12 +29,22 @@ Environment variable:
 ASSISTANT_KEY=your-private-key
 ```
 
-## Usage order
+## Use
 
-1. Open helper page.
-2. Enter the same room code as performer.
-3. Enter the assistant key.
-4. Click Join Private Call.
-5. Open performer page on iPhone.
-6. Allow microphone and arm the performance.
-7. Helper should hear audio. Helper can edit the note live.
+Performer:
+
+```text
+https://your-app.onrender.com
+```
+
+Helper:
+
+```text
+https://your-app.onrender.com/helper?key=YOUR_KEY
+```
+
+Recommended order:
+
+1. Open helper and click Join Audio Room.
+2. Open performer and arm microphone.
+3. Helper should show chunks receiving and hear audio.

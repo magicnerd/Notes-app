@@ -13,7 +13,7 @@
       <p class="muted">Join the private room as listener. Your mic is never requested.</p>
       <label>Room <input id="roomInput" autocomplete="off" autocapitalize="none" /></label>
       <label>Secret key <input id="keyInput" type="password" autocomplete="off" /></label>
-      <button id="connectBtn" type="button">Join Private Call</button>
+      <button id="connectBtn" type="button">Join Audio Room</button>
       <p id="loginStatus" class="status disconnected">Disconnected</p>
     </section>
 
@@ -22,12 +22,11 @@
         <div>
           <h1>Live Note</h1>
           <p id="status" class="status disconnected">Disconnected</p>
-          <p id="callStatus" class="call-status">Call not connected yet.</p>
+          <p id="audioStatus" class="call-status">Audio not receiving yet.</p>
         </div>
-        <button id="reconnectAudioBtn" type="button" class="small-btn">Reconnect Call</button>
+        <button id="resetAudioBtn" type="button" class="small-btn">Reset Audio</button>
       </div>
 
-      <audio id="remoteAudio" autoplay playsinline controls></audio>
       <textarea id="noteEditor" spellcheck="false"></textarea>
       <p class="hint">Edits sync immediately to the performer screen.</p>
     </section>

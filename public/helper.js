@@ -5,20 +5,22 @@ const keyInput = document.getElementById('keyInput');
 const connectBtn = document.getElementById('connectBtn');
 const loginStatus = document.getElementById('loginStatus');
 const statusEl = document.getElementById('status');
-const callStatus = document.getElementById('callStatus');
+const audioStatus = document.getElementById('audioStatus');
 const noteEditor = document.getElementById('noteEditor');
-const remoteAudio = document.getElementById('remoteAudio');
-const reconnectAudioBtn = document.getElementById('reconnectAudioBtn');
+const resetAudioBtn = document.getElementById('resetAudioBtn');
 
 let ws;
-let pc;
 let room;
 let key;
 let sendTimer;
 let reconnectTimer;
 let ignoreEditorEvent = false;
-let userClickedJoin = false;
+let audioCtx;
+let nextPlayTime = 0;
+let chunkCount = 0;
+let lastChunkAt = 0;
 
+const AUDIO_SAMPLE_RATE = 16000;
 const params = new URLSearchParams(location.search);
 roomInput.value = params.get('room') || localStorage.getItem('helperRoom') || 'default';
 keyInput.value = params.get('key') || localStorage.getItem('helperKey') || '';
@@ -34,180 +36,131 @@ function setStatus(text, connected = false) {
   loginStatus.textContent = text;
 }
 
-function setCallStatus(text) {
-  callStatus.textContent = text;
+function setAudioStatus(text) {
+  audioStatus.textContent = text;
 }
 
 function sendWs(payload) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
 }
 
-function getIceServers() {
-  return [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
-  ];
+async function unlockAudio() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) {
+    setAudioStatus('AudioContext not supported in this browser.');
+    return false;
+  }
+  if (!audioCtx || audioCtx.state === 'closed') {
+    audioCtx = new AudioContextClass({ sampleRate: AUDIO_SAMPLE_RATE });
+  }
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+  // Tiny silent click to unlock output after the user's join click.
+  const buffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+  source.start();
+  nextPlayTime = audioCtx.currentTime + 0.08;
+  return true;
 }
 
-// Keep this intentionally lightweight. The user's click on Join is the browser gesture
-// that unlocks audio. Do not block the WebSocket join on audio APIs.
-function unlockAudioOutputSoon() {
-  try {
-    remoteAudio.muted = false;
-    remoteAudio.volume = 1;
-    remoteAudio.playsInline = true;
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextClass) {
-      const ctx = new AudioContextClass();
-      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-    }
-  } catch {}
-}
-
-connectBtn.addEventListener('click', () => {
-  userClickedJoin = true;
+connectBtn.addEventListener('click', async () => {
   room = roomInput.value.trim() || 'default';
   key = keyInput.value.trim();
   localStorage.setItem('helperRoom', room);
   localStorage.setItem('helperKey', key);
 
   connectBtn.disabled = true;
+  setStatus('Joining...', false);
   login.classList.add('hidden');
   assistantPanel.classList.remove('hidden');
-  setStatus('Joining...', false);
-  setCallStatus('Joining room. Waiting for server response...');
-
-  unlockAudioOutputSoon();
+  await unlockAudio();
   connectSocket();
 });
 
 function connectSocket() {
   clearTimeout(reconnectTimer);
-  if (ws) {
-    try { ws.close(); } catch {}
-  }
-
   ws = new WebSocket(wsUrl());
 
   ws.addEventListener('open', () => {
-    setCallStatus('Socket open. Sending helper join request...');
     sendWs({ type: 'join', role: 'assistant', room, key });
+    setStatus('Connected. Waiting for performer...', true);
+    setAudioStatus('Audio output ready. Waiting for performer mic stream.');
   });
 
   ws.addEventListener('message', async (event) => {
-    let msg;
-    try { msg = JSON.parse(event.data); } catch { return; }
+    const msg = JSON.parse(event.data);
 
     if (msg.type === 'auth-error') {
       setStatus('Wrong secret key.', false);
-      setCallStatus('Access denied. Check your Render ASSISTANT_KEY.');
-      connectBtn.disabled = false;
+      setAudioStatus('Access denied. Check your key.');
       return;
     }
 
     if (msg.type === 'joined') {
       setEditor(msg.note || '');
       setStatus(msg.performerOnline ? 'Connected. Performer online.' : 'Connected. Performer offline.', true);
-      setCallStatus(msg.performerOnline ? 'Joined. Waiting for performer call offer...' : 'Joined. Open performer device and arm mic.');
-      return;
     }
 
     if (msg.type === 'presence') {
       setStatus(msg.performerOnline ? 'Connected. Performer online.' : 'Connected. Performer offline.', true);
-      if (!msg.performerOnline) setCallStatus('Performer offline. Waiting.');
-      return;
+      if (!msg.performerOnline) setAudioStatus('Performer offline. Waiting.');
     }
 
-    if (msg.type === 'note-update') {
-      setEditor(msg.note || '');
-      return;
-    }
+    if (msg.type === 'note-update') setEditor(msg.note || '');
 
-    if (msg.type === 'call-status') {
-      setCallStatus(msg.text || 'Call status updated.');
-      return;
-    }
+    if (msg.type === 'audio-status') setAudioStatus(msg.text || 'Audio status updated.');
 
-    if (msg.type === 'call-offer') {
-      await answerCall(msg.offer);
-      return;
-    }
-
-    if (msg.type === 'call-candidate' && pc && msg.candidate) {
-      try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
-    }
-  });
-
-  ws.addEventListener('error', () => {
-    setStatus('Socket error.', false);
-    setCallStatus('Could not open WebSocket. Refresh the page.');
+    if (msg.type === 'audio-pcm') playPcmChunk(msg);
   });
 
   ws.addEventListener('close', () => {
-    closePeer();
-    if (!userClickedJoin) return;
     setStatus('Disconnected. Reconnecting...', false);
-    setCallStatus('Socket closed. Reconnecting...');
+    setAudioStatus('Socket disconnected. Reconnecting...');
     reconnectTimer = setTimeout(connectSocket, 1000);
+  });
+
+  ws.addEventListener('error', () => {
+    setStatus('Connection error.', false);
   });
 }
 
-async function answerCall(offer) {
-  closePeer();
-  unlockAudioOutputSoon();
-  setCallStatus('Call offer received. Answering...');
-
-  pc = new RTCPeerConnection({ iceServers: getIceServers() });
-  pc.addTransceiver('audio', { direction: 'recvonly' });
-
-  pc.ontrack = async (event) => {
-    const stream = event.streams && event.streams[0] ? event.streams[0] : new MediaStream([event.track]);
-    remoteAudio.srcObject = stream;
-    remoteAudio.muted = false;
-    remoteAudio.volume = 1;
-    setCallStatus('Audio track received. Starting playback...');
-    try {
-      await remoteAudio.play();
-      setCallStatus('Call live. You should hear performer audio now.');
-    } catch {
-      setCallStatus('Audio track received. Press play on the audio bar if sound is blocked.');
-    }
-  };
-
-  pc.onicecandidate = (event) => {
-    if (event.candidate) sendWs({ type: 'call-candidate', candidate: event.candidate });
-  };
-
-  pc.onconnectionstatechange = () => {
-    if (!pc) return;
-    const state = pc.connectionState;
-    if (state === 'connecting') setCallStatus('Call connecting...');
-    if (state === 'connected') setCallStatus('Call connected. Listening.');
-    if (state === 'failed') setCallStatus('Call failed. Press Reconnect Call, then refresh performer.');
-    if (state === 'disconnected') setCallStatus('Call disconnected. Waiting to recover.');
-  };
-
-  try {
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    sendWs({ type: 'call-answer', answer });
-    setCallStatus('Call answer sent. Connecting audio...');
-  } catch (err) {
-    setCallStatus('Could not answer call: ' + err.message);
-  }
+function base64ToInt16Array(b64) {
+  const binary = atob(b64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+  return new Int16Array(bytes.buffer);
 }
 
-function closePeer() {
-  if (pc) {
-    pc.ontrack = null;
-    pc.onicecandidate = null;
-    pc.onconnectionstatechange = null;
-    pc.close();
-    pc = null;
+async function playPcmChunk(msg) {
+  if (!audioCtx || audioCtx.state === 'closed') await unlockAudio();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+  const pcm = base64ToInt16Array(msg.data || '');
+  if (!pcm.length) return;
+
+  const buffer = audioCtx.createBuffer(1, pcm.length, AUDIO_SAMPLE_RATE);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) {
+    channel[i] = Math.max(-1, Math.min(1, pcm[i] / 32768));
   }
-  remoteAudio.srcObject = null;
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioCtx.destination);
+
+  const now = audioCtx.currentTime;
+  if (nextPlayTime < now + 0.04) nextPlayTime = now + 0.04;
+  if (nextPlayTime > now + 1.2) nextPlayTime = now + 0.12; // prevent runaway latency
+
+  source.start(nextPlayTime);
+  nextPlayTime += buffer.duration;
+
+  chunkCount++;
+  lastChunkAt = Date.now();
+  setAudioStatus(`Receiving audio. Chunks: ${chunkCount}. Delay about ${Math.round((nextPlayTime - now) * 1000)}ms.`);
 }
 
 function setEditor(text) {
@@ -224,8 +177,15 @@ noteEditor.addEventListener('input', () => {
   }, 60);
 });
 
-reconnectAudioBtn.addEventListener('click', () => {
-  unlockAudioOutputSoon();
-  closePeer();
-  setCallStatus('Call reset. Refresh performer or wait for a new offer.');
+resetAudioBtn.addEventListener('click', async () => {
+  chunkCount = 0;
+  await unlockAudio();
+  setAudioStatus('Audio reset. Waiting for new chunks.');
 });
+
+setInterval(() => {
+  if (!lastChunkAt) return;
+  if (Date.now() - lastChunkAt > 3000) {
+    setAudioStatus(`No audio chunks for ${Math.round((Date.now() - lastChunkAt) / 1000)}s. Refresh performer if needed.`);
+  }
+}, 2000);

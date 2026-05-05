@@ -10,13 +10,18 @@ const noteBody = document.getElementById('noteBody');
 const hiddenLockZone = document.getElementById('hiddenLockZone');
 
 let ws;
-let pc;
 let room;
 let localStream;
 let reconnectTimer;
 let assistantOnline = false;
 let lastNote = localStorage.getItem('lastNote') || prefillInput.value;
-let offerTimer = null;
+let audioCtx;
+let processor;
+let sourceNode;
+let pcmStarted = false;
+let pcmChunkCounter = 0;
+
+const TARGET_SAMPLE_RATE = 16000;
 
 roomInput.value = localStorage.getItem('room') || Math.random().toString(36).slice(2, 8);
 prefillInput.value = lastNote;
@@ -35,12 +40,8 @@ function sendWs(payload) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
 }
 
-function getIceServers() {
-  return [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
-  ];
+function audioStatus(text) {
+  sendWs({ type: 'audio-status', text });
 }
 
 function connectSocket() {
@@ -50,8 +51,8 @@ function connectSocket() {
   ws.addEventListener('open', () => {
     sendWs({ type: 'join', role: 'performer', room });
     sendWs({ type: 'prefill-note', note: getFullNote() });
-    sendWs({ type: 'call-status', text: 'Performer joined. Microphone is armed.' });
     setStatus('Connected. Microphone armed.');
+    startPcmAudioStream();
   });
 
   ws.addEventListener('message', async (event) => {
@@ -60,92 +61,121 @@ function connectSocket() {
     if (msg.type === 'joined') {
       assistantOnline = msg.assistantOnline;
       if (msg.note) updateNote(msg.note);
-      if (assistantOnline) scheduleCallOffers();
+      audioStatus('Performer joined. Mic active. PCM audio stream starting.');
+      startPcmAudioStream();
     }
 
     if (msg.type === 'presence') {
-      const wasOffline = !assistantOnline;
       assistantOnline = msg.assistantOnline;
-      if (assistantOnline && wasOffline) scheduleCallOffers();
+      if (assistantOnline) {
+        audioStatus('Assistant online. Sending microphone audio over WebSocket.');
+        startPcmAudioStream();
+      }
     }
 
     if (msg.type === 'note-update') updateNote(msg.note);
-
-    if (msg.type === 'call-answer' && pc) {
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-      } catch {}
-    }
-
-    if (msg.type === 'call-candidate' && pc && msg.candidate) {
-      try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
-    }
   });
 
   ws.addEventListener('close', () => {
     setStatus('Connection lost. Reconnecting...');
-    closePeer();
-    if (offerTimer) { clearInterval(offerTimer); offerTimer = null; }
+    stopPcmAudioStream();
     reconnectTimer = setTimeout(connectSocket, 1000);
+  });
+
+  ws.addEventListener('error', () => {
+    setStatus('Connection error. Reconnecting...');
   });
 }
 
-
-function scheduleCallOffers() {
-  if (!assistantOnline || !localStream || !ws || ws.readyState !== WebSocket.OPEN) return;
-  if (offerTimer) return;
-  startOneWayCall();
-  offerTimer = setInterval(() => {
-    if (!assistantOnline || !localStream || !ws || ws.readyState !== WebSocket.OPEN) {
-      clearInterval(offerTimer);
-      offerTimer = null;
-      return;
-    }
-    if (!pc || ['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
-      startOneWayCall();
-    }
-  }, 2500);
-}
-
-async function startOneWayCall() {
-  if (!localStream || !ws || ws.readyState !== WebSocket.OPEN) return;
-  closePeer();
-
-  pc = new RTCPeerConnection({ iceServers: getIceServers() });
-
-  for (const track of localStream.getAudioTracks()) {
-    pc.addTrack(track, localStream);
-  }
-
-  pc.onicecandidate = (event) => {
-    if (event.candidate) sendWs({ type: 'call-candidate', candidate: event.candidate });
-  };
-
-  pc.onconnectionstatechange = () => {
-    if (!pc) return;
-    sendWs({ type: 'call-status', text: 'Call state: ' + pc.connectionState });
-    if (['failed', 'disconnected'].includes(pc.connectionState) && assistantOnline) {
-      setTimeout(startOneWayCall, 1000);
-    }
-  };
+function startPcmAudioStream() {
+  if (pcmStarted || !localStream || !ws || ws.readyState !== WebSocket.OPEN) return;
 
   try {
-    const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
-    await pc.setLocalDescription(offer);
-    sendWs({ type: 'call-offer', offer });
-    sendWs({ type: 'call-status', text: 'Call offer sent. Waiting for helper to answer.' });
-  } catch {
-    sendWs({ type: 'call-status', text: 'Call failed to start. Refresh both devices.' });
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      audioStatus('Audio streaming failed: AudioContext is not supported.');
+      return;
+    }
+
+    audioCtx = audioCtx || new AudioContextClass();
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+
+    sourceNode = audioCtx.createMediaStreamSource(localStream);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+    processor.onaudioprocess = (event) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const downsampled = downsampleBuffer(input, audioCtx.sampleRate, TARGET_SAMPLE_RATE);
+      const pcm16 = floatTo16BitPCM(downsampled);
+      sendWs({
+        type: 'audio-pcm',
+        sampleRate: TARGET_SAMPLE_RATE,
+        data: int16ToBase64(pcm16)
+      });
+      pcmChunkCounter++;
+      if (pcmChunkCounter % 20 === 0) {
+        audioStatus('Sending microphone audio. Chunks sent: ' + pcmChunkCounter);
+      }
+    };
+
+    sourceNode.connect(processor);
+    // Some browsers need processor connected to destination to keep it alive.
+    processor.connect(audioCtx.destination);
+    pcmStarted = true;
+    audioStatus('PCM microphone stream started.');
+  } catch (err) {
+    audioStatus('Audio stream start failed: ' + err.message);
   }
 }
 
-function closePeer() {
-  if (pc) {
-    pc.onicecandidate = null;
-    pc.onconnectionstatechange = null;
-    pc.close();
-    pc = null;
+function stopPcmAudioStream() {
+  pcmStarted = false;
+  try { if (processor) processor.disconnect(); } catch {}
+  try { if (sourceNode) sourceNode.disconnect(); } catch {}
+  processor = null;
+  sourceNode = null;
+}
+
+function downsampleBuffer(buffer, inputRate, outputRate) {
+  if (outputRate === inputRate) return buffer;
+  const ratio = inputRate / outputRate;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    result[offsetResult] = count ? accum / count : 0;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
   }
+  return result;
+}
+
+function floatTo16BitPCM(input) {
+  const output = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    output[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return output;
+}
+
+function int16ToBase64(int16) {
+  const bytes = new Uint8Array(int16.buffer);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 function getFullNote() {
@@ -224,6 +254,6 @@ blackout.addEventListener('touchstart', exitBlackout, { passive: true });
 blackout.addEventListener('click', exitBlackout);
 
 window.addEventListener('beforeunload', () => {
-  closePeer();
+  stopPcmAudioStream();
   if (localStream) localStream.getTracks().forEach(track => track.stop());
 });

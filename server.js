@@ -119,8 +119,8 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // WebRTC signalling for one-way private audio call.
-    if (['call-offer', 'call-answer', 'call-candidate', 'call-ended', 'call-status'].includes(msg.type)) {
+    // One-way audio over WebSocket. No WebRTC.
+    if (['audio-pcm', 'audio-status'].includes(msg.type)) {
       const target = ws.role === 'performer' ? room.assistant : room.performer;
       send(target, { ...msg, from: ws.role });
       return;
