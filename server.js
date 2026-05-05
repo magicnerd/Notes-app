@@ -114,7 +114,7 @@ wss.on('connection', (ws) => {
     }
 
     // WebRTC signalling. We do not inspect SDP/candidates, just relay them.
-    if (['webrtc-offer', 'webrtc-answer', 'webrtc-candidate', 'audio-ready', 'audio-ended'].includes(msg.type)) {
+    if (['webrtc-offer', 'webrtc-answer', 'webrtc-candidate', 'audio-ready', 'audio-ended', 'audio-status'].includes(msg.type)) {
       const target = ws.role === 'performer' ? room.assistant : room.performer;
       send(target, { ...msg, from: ws.role });
       return;

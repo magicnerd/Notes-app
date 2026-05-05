@@ -20,8 +20,14 @@ let sendTimer;
 let reconnectTimer;
 let ignoreEditorEvent = false;
 let audioUnlocked = false;
-let fallbackQueue = [];
-let fallbackPlaying = false;
+let blobQueue = [];
+let blobPlaying = false;
+let mediaSource;
+let sourceBuffer;
+let mseQueue = [];
+let mseReady = false;
+let mseMimeType = '';
+let fallbackChunkCount = 0;
 
 const params = new URLSearchParams(location.search);
 roomInput.value = params.get('room') || localStorage.getItem('helperRoom') || 'default';
@@ -49,7 +55,6 @@ async function unlockAudio() {
   remoteAudio.volume = 1;
   fallbackAudio.volume = 1;
 
-  // This tiny silent clip unlocks browser audio output after a user click.
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
@@ -64,8 +69,8 @@ async function unlockAudio() {
 
   try { await remoteAudio.play(); } catch {}
   try { await fallbackAudio.play(); } catch {}
-  setAudioDebug('Audio output enabled. Waiting for stream...');
-  playNextFallbackChunk();
+  setAudioDebug('Audio output enabled. Waiting for performer chunks...');
+  playNextBlobChunk();
 }
 
 enableAudioBtn.addEventListener('click', unlockAudio);
@@ -110,6 +115,10 @@ function connectSocket() {
 
     if (msg.type === 'note-update') setEditor(msg.note || '');
 
+    if (msg.type === 'audio-status') {
+      setAudioDebug(msg.text || 'Performer audio status received.');
+    }
+
     if (msg.type === 'webrtc-offer') await acceptOffer(msg.offer);
 
     if (msg.type === 'webrtc-candidate' && pc && msg.candidate) {
@@ -138,7 +147,6 @@ async function acceptOffer(offer) {
   closePeer();
 
   pc = new RTCPeerConnection({ iceServers: getIceServers() });
-
   pc.addTransceiver('audio', { direction: 'recvonly' });
 
   pc.ontrack = async (event) => {
@@ -149,9 +157,9 @@ async function acceptOffer(offer) {
     setAudioDebug(`WebRTC audio track received: ${event.track.kind}, state ${event.track.readyState}`);
     try {
       await remoteAudio.play();
-      setAudioDebug('WebRTC audio playing. If silent, use the second audio player fallback.');
-    } catch (err) {
-      setAudioDebug('WebRTC audio received, but browser blocked playback. Press Enable Audio.');
+      setAudioDebug('WebRTC audio playing. WebSocket fallback is also available below.');
+    } catch {
+      setAudioDebug('WebRTC audio received, but playback was blocked. Press Enable Audio.');
     }
   };
 
@@ -172,41 +180,92 @@ async function acceptOffer(offer) {
   ws.send(JSON.stringify({ type: 'webrtc-answer', answer }));
 }
 
+function trySetupMediaSource(mimeType) {
+  if (mediaSource || !window.MediaSource) return false;
+  if (!mimeType || !MediaSource.isTypeSupported(mimeType)) return false;
+
+  try {
+    mseMimeType = mimeType;
+    mediaSource = new MediaSource();
+    fallbackAudio.src = URL.createObjectURL(mediaSource);
+    mediaSource.addEventListener('sourceopen', () => {
+      try {
+        sourceBuffer = mediaSource.addSourceBuffer(mseMimeType);
+        sourceBuffer.mode = 'sequence';
+        sourceBuffer.addEventListener('updateend', appendMseQueue);
+        mseReady = true;
+        appendMseQueue();
+        if (audioUnlocked) fallbackAudio.play().catch(() => {});
+      } catch {
+        mseReady = false;
+      }
+    }, { once: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function appendMseQueue() {
+  if (!mseReady || !sourceBuffer || sourceBuffer.updating || mseQueue.length === 0) return;
+  try {
+    sourceBuffer.appendBuffer(mseQueue.shift());
+    if (audioUnlocked) fallbackAudio.play().catch(() => {});
+  } catch {
+    mseQueue.shift();
+  }
+}
+
 function handleFallbackAudioChunk(msg) {
   try {
     const byteString = atob(msg.data);
     const bytes = new Uint8Array(byteString.length);
     for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
-    const blob = new Blob([bytes], { type: msg.mimeType || 'audio/mp4' });
+    fallbackChunkCount++;
+
+    const mimeType = msg.mimeType || 'audio/mp4';
+
+    // Prefer MediaSource, because MediaRecorder chunks are often fragments of one stream
+    // rather than standalone audio files.
+    const usingMse = mediaSource || trySetupMediaSource(mimeType);
+    if (usingMse) {
+      mseQueue.push(bytes.buffer);
+      appendMseQueue();
+      setAudioDebug(`Fallback stream receiving. Chunks: ${fallbackChunkCount}. Type: ${mimeType}`);
+      return;
+    }
+
+    // Backup path for browsers without MediaSource support for the recorder format.
+    const blob = new Blob([bytes], { type: mimeType });
     const url = URL.createObjectURL(blob);
-    fallbackQueue.push(url);
-    setAudioDebug(`Fallback audio received. Queue: ${fallbackQueue.length}`);
-    playNextFallbackChunk();
+    blobQueue.push(url);
+    setAudioDebug(`Fallback blob received. Queue: ${blobQueue.length}. Type: ${mimeType}`);
+    playNextBlobChunk();
   } catch (err) {
     setAudioDebug('Fallback audio chunk failed to decode.');
   }
 }
 
-async function playNextFallbackChunk() {
-  if (!audioUnlocked || fallbackPlaying || fallbackQueue.length === 0) return;
-  fallbackPlaying = true;
-  const url = fallbackQueue.shift();
+async function playNextBlobChunk() {
+  if (!audioUnlocked || blobPlaying || blobQueue.length === 0) return;
+  blobPlaying = true;
+  const url = blobQueue.shift();
   fallbackAudio.src = url;
   fallbackAudio.onended = () => {
     URL.revokeObjectURL(url);
-    fallbackPlaying = false;
-    playNextFallbackChunk();
+    blobPlaying = false;
+    playNextBlobChunk();
   };
   fallbackAudio.onerror = () => {
     URL.revokeObjectURL(url);
-    fallbackPlaying = false;
-    playNextFallbackChunk();
+    blobPlaying = false;
+    playNextBlobChunk();
   };
   try {
     await fallbackAudio.play();
-    setAudioDebug(`Playing fallback audio. Remaining queue: ${fallbackQueue.length}`);
+    setAudioDebug(`Playing fallback blob audio. Remaining queue: ${blobQueue.length}`);
   } catch {
-    fallbackPlaying = false;
+    blobPlaying = false;
     setAudioDebug('Fallback audio ready. Press Enable Audio/play.');
   }
 }
@@ -237,7 +296,12 @@ noteEditor.addEventListener('input', () => {
 
 reconnectAudioBtn.addEventListener('click', () => {
   closePeer();
-  fallbackQueue = [];
-  fallbackPlaying = false;
+  blobQueue = [];
+  blobPlaying = false;
+  mseQueue = [];
+  mediaSource = null;
+  sourceBuffer = null;
+  mseReady = false;
   setStatus('Waiting for performer to renegotiate audio...', true);
+  setAudioDebug('Audio reset. Refresh performer if needed.');
 });
