@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Helper</title>
+  <link rel="stylesheet" href="/helper.css" />
+</head>
+<body>
+  <main class="helper-wrap">
+    <section id="login" class="panel">
+      <h1>Assistant</h1>
+      <label>Room <input id="roomInput" autocomplete="off" /></label>
+      <label>Secret key <input id="keyInput" type="password" autocomplete="off" /></label>
+      <button id="connectBtn">Connect</button>
+      <p id="loginStatus" class="status">Disconnected</p>
+    </section>
+
+    <section id="assistantPanel" class="panel hidden">
+      <div class="top-row">
+        <div>
+          <h1>Live Note</h1>
+          <p id="status" class="status disconnected">Disconnected</p>
+        </div>
+        <button id="reconnectAudioBtn" class="small-btn">Reconnect audio</button>
+      </div>
+
+      <audio id="remoteAudio" autoplay playsinline controls></audio>
+      <textarea id="noteEditor" spellcheck="false"></textarea>
+      <p class="hint">Edits sync immediately to the performer screen.</p>
+    </section>
+  </main>
+
+  <script src="/helper.js"></script>
+</body>
+</html>

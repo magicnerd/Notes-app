@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Notes" />
+  <meta name="theme-color" content="#1c1c1e" />
+  <title>Notes</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="consent" class="consent-screen">
+    <div class="consent-card">
+      <div class="consent-icon">🎙️</div>
+      <h1>Performance audio setup</h1>
+      <p>This activates the microphone for your live performance assistant. Start this before the routine so there are no permission prompts during performance.</p>
+      <label class="room-label">
+        Room
+        <input id="roomInput" autocomplete="off" spellcheck="false" />
+      </label>
+      <textarea id="prefillInput" class="prefill" spellcheck="false">Shopping list
+
+- Milk
+- Bread
+- Coffee</textarea>
+      <button id="armBtn" class="primary-btn">✓ Confirm and arm</button>
+      <p id="setupStatus" class="setup-status">Not armed yet.</p>
+    </div>
+  </div>
+
+  <main id="notesApp" class="notes-app hidden">
+    <header class="notes-header">
+      <button class="back-btn" aria-label="Back">‹ Notes</button>
+      <button class="done-btn">Done</button>
+    </header>
+
+    <section class="note-page">
+      <input id="noteTitle" class="note-title" value="Shopping list" spellcheck="false" />
+      <textarea id="noteBody" class="note-body" spellcheck="false"></textarea>
+    </section>
+
+    <button id="hiddenLockZone" class="hidden-lock-zone" aria-label="hidden lock zone"></button>
+  </main>
+
+  <div id="blackout" class="blackout hidden"></div>
+
+  <script src="/performer.js"></script>
+</body>
+</html>

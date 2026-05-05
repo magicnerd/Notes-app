@@ -1,0 +1,17 @@
+{
+  "name": "notes-performance-app",
+  "version": "1.0.0",
+  "description": "Consent-based live performance Notes-style PWA with assistant note sync and WebRTC audio.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
