@@ -33,16 +33,18 @@ function getRoom(roomId) {
   if (!rooms.has(roomId)) {
     rooms.set(roomId, {
       note: 'Shopping list\n\n- Milk\n- Bread\n- Coffee',
-      clients: new Set(),
       performer: null,
-      assistant: null
+      assistant: null,
+      clients: new Set()
     });
   }
   return rooms.get(roomId);
 }
 
 function send(ws, payload) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(payload));
+  }
 }
 
 function broadcast(room, payload, except = null) {
@@ -51,8 +53,16 @@ function broadcast(room, payload, except = null) {
   }
 }
 
-function safeParse(data) {
-  try { return JSON.parse(data); } catch { return null; }
+function safeParse(raw) {
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+function presence(room) {
+  return {
+    type: 'presence',
+    performerOnline: Boolean(room.performer && room.performer.readyState === WebSocket.OPEN),
+    assistantOnline: Boolean(room.assistant && room.assistant.readyState === WebSocket.OPEN)
+  };
 }
 
 wss.on('connection', (ws) => {
@@ -90,11 +100,7 @@ wss.on('connection', (ws) => {
         assistantOnline: Boolean(room.assistant && room.assistant.readyState === WebSocket.OPEN)
       });
 
-      broadcast(room, {
-        type: 'presence',
-        performerOnline: Boolean(room.performer && room.performer.readyState === WebSocket.OPEN),
-        assistantOnline: Boolean(room.assistant && room.assistant.readyState === WebSocket.OPEN)
-      });
+      broadcast(room, presence(room));
       return;
     }
 
@@ -113,23 +119,10 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // WebRTC signalling. We do not inspect SDP/candidates, just relay them.
-    if (['webrtc-offer', 'webrtc-answer', 'webrtc-candidate', 'audio-ready', 'audio-ended', 'audio-status'].includes(msg.type)) {
+    // WebRTC signalling for one-way private audio call.
+    if (['call-offer', 'call-answer', 'call-candidate', 'call-ended', 'call-status'].includes(msg.type)) {
       const target = ws.role === 'performer' ? room.assistant : room.performer;
       send(target, { ...msg, from: ws.role });
-      return;
-    }
-
-    // Fallback audio path: performer sends short MediaRecorder chunks via WebSocket.
-    if (msg.type === 'audio-chunk' && ws.role === 'performer') {
-      const target = room.assistant;
-      if (!target || target.readyState !== WebSocket.OPEN) return;
-      if (typeof msg.data !== 'string' || msg.data.length > 750000) return;
-      send(target, {
-        type: 'audio-chunk',
-        mimeType: String(msg.mimeType || 'audio/mp4').slice(0, 100),
-        data: msg.data
-      });
       return;
     }
   });
@@ -140,12 +133,7 @@ wss.on('connection', (ws) => {
     room.clients.delete(ws);
     if (room.performer === ws) room.performer = null;
     if (room.assistant === ws) room.assistant = null;
-
-    broadcast(room, {
-      type: 'presence',
-      performerOnline: Boolean(room.performer && room.performer.readyState === WebSocket.OPEN),
-      assistantOnline: Boolean(room.assistant && room.assistant.readyState === WebSocket.OPEN)
-    });
+    broadcast(room, presence(room));
   });
 });
 

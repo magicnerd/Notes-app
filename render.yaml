@@ -1,12 +1,10 @@
 services:
   - type: web
-    name: notes-performance-app
-    runtime: node
+    name: notes-private-call-app
+    env: node
     plan: free
     buildCommand: npm install
     startCommand: npm start
     envVars:
-      - key: NODE_VERSION
-        value: 20
       - key: ASSISTANT_KEY
-        generateValue: true
+        sync: false

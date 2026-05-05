@@ -1,4 +1,4 @@
-const consent = document.getElementById('consent');
+const setup = document.getElementById('setup');
 const notesApp = document.getElementById('notesApp');
 const blackout = document.getElementById('blackout');
 const armBtn = document.getElementById('armBtn');
@@ -10,16 +10,12 @@ const noteBody = document.getElementById('noteBody');
 const hiddenLockZone = document.getElementById('hiddenLockZone');
 
 let ws;
+let pc;
 let room;
 let localStream;
-let pc;
 let reconnectTimer;
-let lastNote = localStorage.getItem('lastNote') || prefillInput.value;
-let isBlack = false;
 let assistantOnline = false;
-let mediaRecorder;
-let fallbackMimeType = '';
-let fallbackStarted = false;
+let lastNote = localStorage.getItem('lastNote') || prefillInput.value;
 
 roomInput.value = localStorage.getItem('room') || Math.random().toString(36).slice(2, 8);
 prefillInput.value = lastNote;
@@ -35,13 +31,15 @@ function setStatus(text) {
 }
 
 function sendWs(payload) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(payload));
-  }
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
 }
 
-function audioStatus(text) {
-  sendWs({ type: 'audio-status', text });
+function getIceServers() {
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+  ];
 }
 
 function connectSocket() {
@@ -51,12 +49,8 @@ function connectSocket() {
   ws.addEventListener('open', () => {
     sendWs({ type: 'join', role: 'performer', room });
     sendWs({ type: 'prefill-note', note: getFullNote() });
-    setStatus('Connected. Audio armed.');
-    audioStatus('Performer connected. Mic stream exists: ' + Boolean(localStream));
-
-    // Start WebSocket fallback after the socket is definitely open.
-    // This is intentionally always on because it is more reliable than WebRTC across strict networks.
-    startFallbackAudioStream();
+    sendWs({ type: 'call-status', text: 'Performer joined. Microphone is armed.' });
+    setStatus('Connected. Microphone armed.');
   });
 
   ws.addEventListener('message', async (event) => {
@@ -65,41 +59,36 @@ function connectSocket() {
     if (msg.type === 'joined') {
       assistantOnline = msg.assistantOnline;
       if (msg.note) updateNote(msg.note);
-      if (assistantOnline) await createOffer();
+      if (assistantOnline) await startOneWayCall();
     }
 
     if (msg.type === 'presence') {
       const wasOffline = !assistantOnline;
       assistantOnline = msg.assistantOnline;
-      if (assistantOnline && wasOffline && localStream) await createOffer();
+      if (assistantOnline && wasOffline) await startOneWayCall();
     }
 
     if (msg.type === 'note-update') updateNote(msg.note);
 
-    if (msg.type === 'webrtc-answer' && pc) {
-      await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+    if (msg.type === 'call-answer' && pc) {
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+      } catch {}
     }
 
-    if (msg.type === 'webrtc-candidate' && pc && msg.candidate) {
+    if (msg.type === 'call-candidate' && pc && msg.candidate) {
       try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
     }
   });
 
   ws.addEventListener('close', () => {
     setStatus('Connection lost. Reconnecting...');
-    stopFallbackAudioStream(false);
+    closePeer();
     reconnectTimer = setTimeout(connectSocket, 1000);
   });
 }
 
-function getIceServers() {
-  return [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' }
-  ];
-}
-
-async function createOffer() {
+async function startOneWayCall() {
   if (!localStream || !ws || ws.readyState !== WebSocket.OPEN) return;
   closePeer();
 
@@ -110,116 +99,25 @@ async function createOffer() {
   }
 
   pc.onicecandidate = (event) => {
-    if (event.candidate) sendWs({ type: 'webrtc-candidate', candidate: event.candidate });
+    if (event.candidate) sendWs({ type: 'call-candidate', candidate: event.candidate });
   };
 
   pc.onconnectionstatechange = () => {
-    audioStatus('WebRTC state: ' + pc.connectionState + '. WebSocket audio fallback is also running.');
+    if (!pc) return;
+    sendWs({ type: 'call-status', text: 'Call state: ' + pc.connectionState });
     if (['failed', 'disconnected'].includes(pc.connectionState) && assistantOnline) {
-      setTimeout(createOffer, 1000);
+      setTimeout(startOneWayCall, 1000);
     }
   };
 
   try {
-    const offer = await pc.createOffer({ offerToReceiveAudio: false });
+    const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
     await pc.setLocalDescription(offer);
-    sendWs({ type: 'webrtc-offer', offer });
-  } catch (err) {
-    audioStatus('WebRTC offer failed. Fallback continues.');
+    sendWs({ type: 'call-offer', offer });
+    sendWs({ type: 'call-status', text: 'Call offer sent. Waiting for helper to answer.' });
+  } catch {
+    sendWs({ type: 'call-status', text: 'Call failed to start. Refresh both devices.' });
   }
-}
-
-function pickRecorderMimeType() {
-  if (!window.MediaRecorder) return '';
-  const candidates = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/mp4;codecs=mp4a.40.2',
-    'audio/mp4',
-    'audio/aac'
-  ];
-  return candidates.find(type => {
-    try { return MediaRecorder.isTypeSupported(type); } catch { return false; }
-  }) || '';
-}
-
-function startFallbackAudioStream() {
-  if (!window.MediaRecorder) {
-    audioStatus('Fallback failed: MediaRecorder is not supported on this browser.');
-    return;
-  }
-  if (!localStream) {
-    audioStatus('Fallback failed: no local mic stream.');
-    return;
-  }
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    audioStatus('Fallback waiting: socket not open yet.');
-    return;
-  }
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') return;
-
-  fallbackMimeType = pickRecorderMimeType();
-
-  try {
-    mediaRecorder = fallbackMimeType
-      ? new MediaRecorder(localStream, { mimeType: fallbackMimeType })
-      : new MediaRecorder(localStream);
-
-    mediaRecorder.addEventListener('start', () => {
-      fallbackStarted = true;
-      audioStatus('Fallback recorder started. Type: ' + (mediaRecorder.mimeType || fallbackMimeType || 'browser default'));
-    });
-
-    mediaRecorder.addEventListener('dataavailable', async (event) => {
-      if (!event.data || event.data.size === 0) return;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-      try {
-        const buffer = await event.data.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        let binary = '';
-        const chunkSize = 0x8000;
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-          const sub = bytes.subarray(i, i + chunkSize);
-          binary += String.fromCharCode.apply(null, sub);
-        }
-
-        sendWs({
-          type: 'audio-chunk',
-          mimeType: event.data.type || mediaRecorder.mimeType || fallbackMimeType || 'audio/mp4',
-          data: btoa(binary)
-        });
-        audioStatus('Fallback audio chunk sent: ' + event.data.size + ' bytes');
-      } catch (err) {
-        audioStatus('Fallback chunk send failed: ' + err.message);
-      }
-    });
-
-    mediaRecorder.addEventListener('error', (event) => {
-      audioStatus('Fallback recorder error.');
-    });
-
-    mediaRecorder.addEventListener('stop', () => {
-      if (fallbackStarted && ws && ws.readyState === WebSocket.OPEN && localStream) {
-        // Some mobile browsers stop recorders after interruptions. Restart unless page is closing.
-        setTimeout(() => startFallbackAudioStream(), 500);
-      }
-    });
-
-    // 1000ms is a decent latency/stability compromise.
-    mediaRecorder.start(1000);
-  } catch (err) {
-    mediaRecorder = null;
-    audioStatus('Fallback recorder could not start: ' + err.message);
-  }
-}
-
-function stopFallbackAudioStream(allowRestart = true) {
-  fallbackStarted = allowRestart;
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    try { mediaRecorder.stop(); } catch {}
-  }
-  mediaRecorder = null;
 }
 
 function closePeer() {
@@ -253,9 +151,9 @@ armBtn.addEventListener('click', async () => {
   try {
     armBtn.disabled = true;
     setStatus('Requesting microphone permission...');
+
     room = roomInput.value.trim() || 'default';
     localStorage.setItem('room', room);
-
     updateNote(prefillInput.value);
 
     localStream = await navigator.mediaDevices.getUserMedia({
@@ -268,11 +166,10 @@ armBtn.addEventListener('click', async () => {
     });
 
     const tracks = localStream.getAudioTracks();
-    if (!tracks.length) throw new Error('No audio tracks returned by browser.');
+    if (!tracks.length) throw new Error('No microphone audio track was returned.');
 
-    setStatus('Mic allowed. Connecting...');
     connectSocket();
-    consent.classList.add('hidden');
+    setup.classList.add('hidden');
     notesApp.classList.remove('hidden');
 
     if ('serviceWorker' in navigator) {
@@ -280,15 +177,15 @@ armBtn.addEventListener('click', async () => {
     }
   } catch (err) {
     armBtn.disabled = false;
-    setStatus('Microphone permission failed: ' + err.message);
+    setStatus('Microphone setup failed: ' + err.message);
   }
 });
 
-hiddenLockZone.addEventListener('click', () => enterBlackout());
+hiddenLockZone.addEventListener('click', enterBlackout);
 
 let tapCount = 0;
-notesApp.addEventListener('touchstart', (e) => {
-  const touch = e.touches[0];
+notesApp.addEventListener('touchstart', (event) => {
+  const touch = event.touches[0];
   if (touch.clientX > window.innerWidth * 0.68 && touch.clientY > window.innerHeight * 0.72) {
     tapCount++;
     setTimeout(() => tapCount = Math.max(0, tapCount - 1), 650);
@@ -297,12 +194,10 @@ notesApp.addEventListener('touchstart', (e) => {
 }, { passive: true });
 
 function enterBlackout() {
-  isBlack = true;
   blackout.classList.remove('hidden');
 }
 
 function exitBlackout() {
-  isBlack = false;
   blackout.classList.add('hidden');
 }
 
@@ -311,6 +206,5 @@ blackout.addEventListener('click', exitBlackout);
 
 window.addEventListener('beforeunload', () => {
   closePeer();
-  stopFallbackAudioStream(false);
-  if (localStream) localStream.getTracks().forEach(t => t.stop());
+  if (localStream) localStream.getTracks().forEach(track => track.stop());
 });

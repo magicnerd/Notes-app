@@ -1,17 +1,15 @@
-# Notes Performance App, Render Version
+# Notes Private Call App
 
-A consent-armed, Notes-style PWA with:
+A Render-ready Node app with:
 
-- iOS Notes dark-mode performer interface
-- full black lock screen
-- assistant page at `/helper`
-- WebSocket note syncing
-- WebRTC one-way audio after the performer confirms microphone setup
-- Render-ready deployment
+- iOS Notes style dark performer UI
+- private helper page at `/helper`
+- live note syncing
+- one-way WebRTC audio call from performer to helper
+- explicit performer consent before microphone access
+- PWA support for iPhone Add to Home Screen
 
-## Run locally
-
-Install Node.js LTS first.
+## Local run
 
 ```bash
 npm install
@@ -20,59 +18,37 @@ npm start
 
 Open:
 
-- Performer: `http://localhost:3000`
-- Assistant: `http://localhost:3000/helper`
+- Performer: http://localhost:3000
+- Helper: http://localhost:3000/helper
 
-Default local assistant key:
+## Render
 
-```text
-change-me-secret
+Use the same existing Render Web Service.
+
+Build command:
+
+```bash
+npm install
 ```
 
-## Deploy on Render
+Start command:
 
-1. Make a GitHub repo and upload this folder.
-2. Go to Render.
-3. Create a new Web Service.
-4. Connect the GitHub repo.
-5. Use these settings:
-   - Runtime: Node
-   - Build command: `npm install`
-   - Start command: `npm start`
-6. Add environment variable:
-   - `ASSISTANT_KEY=your-secret-key`
-7. Deploy.
-
-After deployment, use:
-
-- Performer: `https://your-app-name.onrender.com`
-- Assistant: `https://your-app-name.onrender.com/helper`
-
-The helper can also prefill fields from the URL:
-
-```text
-https://your-app-name.onrender.com/helper?room=abc123&key=your-secret-key
+```bash
+npm start
 ```
 
-## iPhone PWA setup
+Environment variable:
 
-1. Open the performer link in Safari on the iPhone.
-2. Tap Share.
-3. Tap Add to Home Screen.
-4. Launch it from the new Notes icon.
-5. Before performance, tap Confirm and arm so the microphone permission is already handled.
+```text
+ASSISTANT_KEY=your-private-key
+```
 
-## Use during performance
+## Usage order
 
-1. Performer opens the PWA.
-2. Performer confirms the audio setup before the routine.
-3. Assistant opens `/helper`, enters the same room and secret key.
-4. Assistant edits the note live.
-5. Performer taps the hidden bottom-right zone, or triple-taps near the bottom-right, to enter black screen.
-6. Tap the black screen to reveal the note.
-
-## Important reliability notes
-
-- Render free hosting can sleep after inactivity. Open both pages before performance so it wakes up.
-- Paid Render is better for real shows.
-- WebRTC may fail on some strict networks. Test with the exact devices and network before relying on it.
+1. Open helper page.
+2. Enter the same room code as performer.
+3. Enter the assistant key.
+4. Click Join Private Call.
+5. Open performer page on iPhone.
+6. Allow microphone and arm the performance.
+7. Helper should hear audio. Helper can edit the note live.

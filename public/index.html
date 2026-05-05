@@ -5,32 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Notes" />
-  <meta name="theme-color" content="#1c1c1e" />
+  <meta name="theme-color" content="#000000" />
   <title>Notes</title>
-  <link rel="manifest" href="/manifest.webmanifest" />
-  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/icon.svg" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div id="consent" class="consent-screen">
-    <div class="consent-card">
-      <div class="consent-icon">🎙️</div>
-      <h1>Performance audio setup</h1>
-      <p>This activates the microphone for your live performance assistant. Start this before the routine so there are no permission prompts during performance.</p>
-      <label class="room-label">
-        Room
-        <input id="roomInput" autocomplete="off" spellcheck="false" />
+  <section id="setup" class="setup-screen">
+    <div class="setup-card">
+      <h1>Performance setup</h1>
+      <p class="setup-copy">Microphone audio will be sent to your private helper after you confirm. Start this before the performance.</p>
+      <label>Room code
+        <input id="roomInput" autocomplete="off" autocapitalize="none" />
       </label>
-      <textarea id="prefillInput" class="prefill" spellcheck="false">Shopping list
+      <label>Starting note
+        <textarea id="prefillInput" rows="5">Shopping list
 
 - Milk
 - Bread
 - Coffee</textarea>
-      <button id="armBtn" class="primary-btn">✓ Confirm and arm</button>
-      <p id="setupStatus" class="setup-status">Not armed yet.</p>
+      </label>
+      <button id="armBtn">Allow Microphone and Open Notes</button>
+      <p id="setupStatus" class="setup-status">Not connected.</p>
     </div>
-  </div>
+  </section>
 
   <main id="notesApp" class="notes-app hidden">
     <header class="notes-header">
@@ -38,15 +37,16 @@
       <button class="done-btn">Done</button>
     </header>
 
-    <section class="note-page">
-      <input id="noteTitle" class="note-title" value="Shopping list" spellcheck="false" />
-      <textarea id="noteBody" class="note-body" spellcheck="false"></textarea>
+    <section class="note-sheet">
+      <input id="noteTitle" class="note-title" aria-label="Note title" />
+      <textarea id="noteBody" class="note-body" aria-label="Note body"></textarea>
     </section>
 
-    <button id="hiddenLockZone" class="hidden-lock-zone" aria-label="hidden lock zone"></button>
+    <div id="hiddenLockZone" class="hidden-lock-zone" aria-hidden="true"></div>
+    <div class="home-indicator" aria-hidden="true"></div>
   </main>
 
-  <div id="blackout" class="blackout hidden"></div>
+  <div id="blackout" class="blackout hidden" aria-hidden="true"></div>
 
   <script src="/performer.js"></script>
 </body>

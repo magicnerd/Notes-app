@@ -10,10 +10,11 @@
   <main class="helper-wrap">
     <section id="login" class="panel">
       <h1>Assistant</h1>
-      <label>Room <input id="roomInput" autocomplete="off" /></label>
+      <p class="muted">Join the private room as listener. Your mic is never requested.</p>
+      <label>Room <input id="roomInput" autocomplete="off" autocapitalize="none" /></label>
       <label>Secret key <input id="keyInput" type="password" autocomplete="off" /></label>
-      <button id="connectBtn">Connect</button>
-      <p id="loginStatus" class="status">Disconnected</p>
+      <button id="connectBtn" type="button">Join Private Call</button>
+      <p id="loginStatus" class="status disconnected">Disconnected</p>
     </section>
 
     <section id="assistantPanel" class="panel hidden">
@@ -21,16 +22,14 @@
         <div>
           <h1>Live Note</h1>
           <p id="status" class="status disconnected">Disconnected</p>
-          <p id="audioDebug" class="debug">Audio not enabled yet.</p>
+          <p id="callStatus" class="call-status">Call not connected yet.</p>
         </div>
-        <button id="reconnectAudioBtn" class="small-btn">Reconnect audio</button>
+        <button id="reconnectAudioBtn" type="button" class="small-btn">Reconnect Call</button>
       </div>
 
-      <button id="enableAudioBtn" class="audio-btn">Enable Audio</button>
       <audio id="remoteAudio" autoplay playsinline controls></audio>
-      <audio id="fallbackAudio" playsinline controls></audio>
       <textarea id="noteEditor" spellcheck="false"></textarea>
-      <p class="hint">Edits sync immediately to the performer screen. Use Enable Audio once after opening this page.</p>
+      <p class="hint">Edits sync immediately to the performer screen.</p>
     </section>
   </main>
 
