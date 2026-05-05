@@ -5,9 +5,10 @@
   --text: #f5f5f7;
   --muted: #8e8e93;
   --yellow: #f2c94c;
+  --line: rgba(84, 84, 88, .55);
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); }
 body { overscroll-behavior: none; }
 .hidden { display: none !important; }
@@ -23,7 +24,8 @@ button { border: 0; border-radius: 14px; font: 700 16px var(--font); padding: 13
 button:disabled { opacity: .55; cursor: default; }
 .setup-status { min-height: 20px; color: #a1a1a6; font-size: 13px; }
 
-.notes-app { position: fixed; inset: 0; background: #000; display: flex; flex-direction: column; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+.notes-app, .notes-list { position: fixed; inset: 0; background: #000; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+.notes-app { display: flex; flex-direction: column; }
 .notes-header { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; color: var(--yellow); background: #000; }
 .back-btn, .done-btn { background: transparent; color: var(--yellow); padding: 8px 0; border-radius: 0; font-weight: 500; font-size: 17px; }
 .back-btn { font-size: 20px; letter-spacing: -0.03em; }
@@ -34,3 +36,18 @@ button:disabled { opacity: .55; cursor: default; }
 .hidden-lock-zone { position: fixed; right: 0; bottom: 0; width: 34vw; height: 34vh; z-index: 5; }
 .home-indicator { position: fixed; left: 50%; bottom: max(8px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: 134px; height: 5px; border-radius: 999px; background: rgba(255,255,255,.45); pointer-events: none; }
 .blackout { position: fixed; inset: 0; z-index: 999999; background: #000; cursor: none; }
+
+.notes-list { display: flex; flex-direction: column; }
+.list-header { padding: 10px 18px 8px; background: #000; }
+.folder-row { color: var(--yellow); font-size: 17px; margin: 2px 0 10px; }
+.list-title-row { display: flex; align-items: center; justify-content: space-between; }
+.list-title-row h1 { margin: 0; font-size: 34px; line-height: 1; letter-spacing: -0.05em; }
+.ellipsis { color: var(--yellow); font-size: 20px; letter-spacing: 1px; }
+.search-pill { margin-top: 14px; height: 36px; border-radius: 12px; background: #1c1c1e; color: #8e8e93; display: flex; align-items: center; padding: 0 14px; font-size: 17px; }
+.notes-table { margin: 8px 12px 0; border-radius: 14px; overflow: hidden; background: #1c1c1e; }
+.note-row { display: block; width: 100%; border: 0; border-radius: 0; background: #1c1c1e; color: #fff; text-align: left; padding: 13px 16px 12px; font: inherit; border-bottom: 1px solid var(--line); }
+.note-row:last-child { border-bottom: 0; }
+.row-title { font-size: 17px; font-weight: 650; line-height: 1.18; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-preview { margin-top: 3px; color: #8e8e93; font-size: 14px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 400; }
+.list-footer { margin-top: auto; min-height: 58px; padding: 12px 20px max(28px, env(safe-area-inset-bottom)); color: #8e8e93; display: flex; align-items: center; justify-content: center; position: relative; font-size: 13px; }
+.compose-icon { position: absolute; right: 22px; color: var(--yellow); font-size: 24px; transform: rotate(-10deg); }

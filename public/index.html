@@ -31,10 +31,50 @@
     </div>
   </section>
 
+  <main id="notesList" class="notes-list hidden">
+    <header class="list-header">
+      <div class="folder-row">‹ Folders</div>
+      <div class="list-title-row">
+        <h1>Notes</h1>
+        <span class="ellipsis">•••</span>
+      </div>
+      <div class="search-pill">Search</div>
+    </header>
+
+    <section class="notes-table" aria-label="Notes list">
+      <button id="currentNoteRow" class="note-row" type="button">
+        <div class="row-title" id="currentRowTitle">Shopping list</div>
+        <div class="row-preview" id="currentRowPreview">- Milk - Bread - Coffee</div>
+      </button>
+      <button class="note-row dummy-note" type="button" data-title="Ideas" data-body="Film backyard photo challenge\n\n- Rain on leaves\n- Low angle shadows\n- Bottle reflection">
+        <div class="row-title">Ideas</div>
+        <div class="row-preview">Film backyard photo challenge</div>
+      </button>
+      <button class="note-row dummy-note" type="button" data-title="Gym" data-body="Legs\n\nSmith squats\nRDLs\nCalves\nStretch hips">
+        <div class="row-title">Gym</div>
+        <div class="row-preview">Legs, RDLs, calves</div>
+      </button>
+      <button class="note-row dummy-note" type="button" data-title="Books" data-body="To read\n\nAtomic Habits\nDeep Work\nThe War of Art">
+        <div class="row-title">Books</div>
+        <div class="row-preview">To read</div>
+      </button>
+      <button class="note-row dummy-note" type="button" data-title="Packing" data-body="Hike packing\n\nHeadtorch\nRain jacket\nBattery bank\nFirst aid">
+        <div class="row-title">Packing</div>
+        <div class="row-preview">Headtorch, rain jacket</div>
+      </button>
+    </section>
+
+    <footer class="list-footer">
+      <span>5 Notes</span>
+      <span class="compose-icon">□</span>
+    </footer>
+    <div class="home-indicator" aria-hidden="true"></div>
+  </main>
+
   <main id="notesApp" class="notes-app hidden">
     <header class="notes-header">
-      <button class="back-btn" aria-label="Back">‹ Notes</button>
-      <button class="done-btn">Done</button>
+      <button id="backToListBtn" class="back-btn" aria-label="Back" type="button">‹ Notes</button>
+      <button id="doneBtn" class="done-btn" type="button">Done</button>
     </header>
 
     <section class="note-sheet">

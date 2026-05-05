@@ -1,4 +1,5 @@
 const setup = document.getElementById('setup');
+const notesList = document.getElementById('notesList');
 const notesApp = document.getElementById('notesApp');
 const blackout = document.getElementById('blackout');
 const armBtn = document.getElementById('armBtn');
@@ -8,6 +9,12 @@ const prefillInput = document.getElementById('prefillInput');
 const noteTitle = document.getElementById('noteTitle');
 const noteBody = document.getElementById('noteBody');
 const hiddenLockZone = document.getElementById('hiddenLockZone');
+const backToListBtn = document.getElementById('backToListBtn');
+const doneBtn = document.getElementById('doneBtn');
+const currentNoteRow = document.getElementById('currentNoteRow');
+const currentRowTitle = document.getElementById('currentRowTitle');
+const currentRowPreview = document.getElementById('currentRowPreview');
+const dummyNotes = document.querySelectorAll('.dummy-note');
 
 let ws;
 let room;
@@ -15,17 +22,22 @@ let localStream;
 let reconnectTimer;
 let assistantOnline = false;
 let lastNote = localStorage.getItem('lastNote') || prefillInput.value;
+let activeNoteIsMain = true;
+let realNoteCache = lastNote;
 let audioCtx;
 let processor;
 let sourceNode;
 let pcmStarted = false;
 let pcmChunkCounter = 0;
+let micEnabled = false;
+let isRestartingMic = false;
 
 const TARGET_SAMPLE_RATE = 16000;
 
 roomInput.value = localStorage.getItem('room') || Math.random().toString(36).slice(2, 8);
 prefillInput.value = lastNote;
 renderNote(lastNote);
+updateCurrentRow(lastNote);
 
 function wsUrl() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -52,7 +64,7 @@ function connectSocket() {
     sendWs({ type: 'join', role: 'performer', room });
     sendWs({ type: 'prefill-note', note: getFullNote() });
     setStatus('Connected. Microphone armed.');
-    startPcmAudioStream();
+    if (micEnabled) startPcmAudioStream();
   });
 
   ws.addEventListener('message', async (event) => {
@@ -60,20 +72,26 @@ function connectSocket() {
 
     if (msg.type === 'joined') {
       assistantOnline = msg.assistantOnline;
-      if (msg.note) updateNote(msg.note);
-      audioStatus('Performer joined. Mic active. PCM audio stream starting.');
-      startPcmAudioStream();
+      if (msg.note && activeNoteIsMain) updateNote(msg.note);
+      audioStatus(micEnabled ? 'Performer joined. Mic active.' : 'Performer joined. Mic muted.');
+      if (micEnabled) startPcmAudioStream();
     }
 
     if (msg.type === 'presence') {
       assistantOnline = msg.assistantOnline;
       if (assistantOnline) {
-        audioStatus('Assistant online. Sending microphone audio over WebSocket.');
-        startPcmAudioStream();
+        audioStatus(micEnabled ? 'Assistant online. Sending microphone audio.' : 'Assistant online. Mic muted.');
+        if (micEnabled) startPcmAudioStream();
       }
     }
 
-    if (msg.type === 'note-update') updateNote(msg.note);
+    if (msg.type === 'note-update') {
+      realNoteCache = String(msg.note || '');
+      lastNote = realNoteCache;
+      localStorage.setItem('lastNote', lastNote);
+      updateCurrentRow(lastNote);
+      if (activeNoteIsMain) renderNote(lastNote);
+    }
   });
 
   ws.addEventListener('close', () => {
@@ -87,8 +105,57 @@ function connectSocket() {
   });
 }
 
+async function enableMic() {
+  if (micEnabled) return true;
+  if (isRestartingMic) return false;
+  isRestartingMic = true;
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      },
+      video: false
+    });
+
+    const tracks = localStream.getAudioTracks();
+    if (!tracks.length) throw new Error('No microphone audio track was returned.');
+
+    micEnabled = true;
+    audioStatus('Mic unmuted. Audio stream starting.');
+    startPcmAudioStream();
+    return true;
+  } catch (err) {
+    micEnabled = false;
+    audioStatus('Mic could not restart: ' + err.message);
+    return false;
+  } finally {
+    isRestartingMic = false;
+  }
+}
+
+function disableMic() {
+  stopPcmAudioStream();
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  micEnabled = false;
+  audioStatus('Mic muted by performer.');
+}
+
+async function toggleMicFromDone() {
+  // This button stays visually normal, but it silently acts as the safety mute.
+  if (micEnabled) {
+    disableMic();
+  } else {
+    await enableMic();
+  }
+}
+
 function startPcmAudioStream() {
-  if (pcmStarted || !localStream || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (pcmStarted || !micEnabled || !localStream || !ws || ws.readyState !== WebSocket.OPEN) return;
 
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -104,7 +171,7 @@ function startPcmAudioStream() {
     processor = audioCtx.createScriptProcessor(4096, 1, 1);
 
     processor.onaudioprocess = (event) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!micEnabled || !ws || ws.readyState !== WebSocket.OPEN) return;
       const input = event.inputBuffer.getChannelData(0);
       const downsampled = downsampleBuffer(input, audioCtx.sampleRate, TARGET_SAMPLE_RATE);
       const pcm16 = floatTo16BitPCM(downsampled);
@@ -123,7 +190,7 @@ function startPcmAudioStream() {
     // Some browsers need processor connected to destination to keep it alive.
     processor.connect(audioCtx.destination);
     pcmStarted = true;
-    audioStatus('PCM microphone stream started.');
+    audioStatus('Microphone audio stream started.');
   } catch (err) {
     audioStatus('Audio stream start failed: ' + err.message);
   }
@@ -192,8 +259,42 @@ function renderNote(text) {
 
 function updateNote(text) {
   lastNote = String(text || '');
+  realNoteCache = lastNote;
   localStorage.setItem('lastNote', lastNote);
   renderNote(lastNote);
+  updateCurrentRow(lastNote);
+}
+
+function updateCurrentRow(text) {
+  const full = String(text || '').trim();
+  const parts = full.split(/\n\s*\n/);
+  const title = (parts.shift() || 'New Note').trim();
+  const body = parts.join(' ').replace(/\s+/g, ' ').trim();
+  currentRowTitle.textContent = title || 'New Note';
+  currentRowPreview.textContent = body || 'No additional text';
+}
+
+function showMainNote() {
+  activeNoteIsMain = true;
+  renderNote(realNoteCache || lastNote);
+  notesList.classList.add('hidden');
+  notesApp.classList.remove('hidden');
+}
+
+function showDummyNote(title, body) {
+  activeNoteIsMain = false;
+  renderNote(`${title}\n\n${body}`);
+  notesList.classList.add('hidden');
+  notesApp.classList.remove('hidden');
+}
+
+function showNotesList() {
+  if (activeNoteIsMain) {
+    realNoteCache = getFullNote();
+    updateCurrentRow(realNoteCache);
+  }
+  notesApp.classList.add('hidden');
+  notesList.classList.remove('hidden');
 }
 
 armBtn.addEventListener('click', async () => {
@@ -205,17 +306,8 @@ armBtn.addEventListener('click', async () => {
     localStorage.setItem('room', room);
     updateNote(prefillInput.value);
 
-    localStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      },
-      video: false
-    });
-
-    const tracks = localStream.getAudioTracks();
-    if (!tracks.length) throw new Error('No microphone audio track was returned.');
+    const micReady = await enableMic();
+    if (!micReady) throw new Error('Microphone could not be started.');
 
     connectSocket();
     setup.classList.add('hidden');
@@ -228,6 +320,13 @@ armBtn.addEventListener('click', async () => {
     armBtn.disabled = false;
     setStatus('Microphone setup failed: ' + err.message);
   }
+});
+
+backToListBtn.addEventListener('click', showNotesList);
+doneBtn.addEventListener('click', toggleMicFromDone);
+currentNoteRow.addEventListener('click', showMainNote);
+dummyNotes.forEach(row => {
+  row.addEventListener('click', () => showDummyNote(row.dataset.title || 'Note', row.dataset.body || ''));
 });
 
 hiddenLockZone.addEventListener('click', enterBlackout);
@@ -254,6 +353,5 @@ blackout.addEventListener('touchstart', exitBlackout, { passive: true });
 blackout.addEventListener('click', exitBlackout);
 
 window.addEventListener('beforeunload', () => {
-  stopPcmAudioStream();
-  if (localStream) localStream.getTracks().forEach(track => track.stop());
+  disableMic();
 });
