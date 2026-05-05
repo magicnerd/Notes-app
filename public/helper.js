@@ -17,7 +17,7 @@ let key;
 let sendTimer;
 let reconnectTimer;
 let ignoreEditorEvent = false;
-let audioUnlocked = false;
+let userClickedJoin = false;
 
 const params = new URLSearchParams(location.search);
 roomInput.value = params.get('room') || localStorage.getItem('helperRoom') || 'default';
@@ -50,60 +50,58 @@ function getIceServers() {
   ];
 }
 
-async function unlockAudioOutput() {
-  audioUnlocked = true;
-  remoteAudio.muted = false;
-  remoteAudio.volume = 1;
-
+// Keep this intentionally lightweight. The user's click on Join is the browser gesture
+// that unlocks audio. Do not block the WebSocket join on audio APIs.
+function unlockAudioOutputSoon() {
   try {
+    remoteAudio.muted = false;
+    remoteAudio.volume = 1;
+    remoteAudio.playsInline = true;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (AudioContextClass) {
       const ctx = new AudioContextClass();
-      if (ctx.state === 'suspended') await ctx.resume();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      gain.gain.value = 0.00001;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.02);
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     }
   } catch {}
-
-  try { await remoteAudio.play(); } catch {}
 }
 
-connectBtn.addEventListener('click', async () => {
+connectBtn.addEventListener('click', () => {
+  userClickedJoin = true;
   room = roomInput.value.trim() || 'default';
   key = keyInput.value.trim();
   localStorage.setItem('helperRoom', room);
   localStorage.setItem('helperKey', key);
 
   connectBtn.disabled = true;
-  setStatus('Joining...', false);
-  await unlockAudioOutput();
-
   login.classList.add('hidden');
   assistantPanel.classList.remove('hidden');
+  setStatus('Joining...', false);
+  setCallStatus('Joining room. Waiting for server response...');
+
+  unlockAudioOutputSoon();
   connectSocket();
 });
 
 function connectSocket() {
   clearTimeout(reconnectTimer);
+  if (ws) {
+    try { ws.close(); } catch {}
+  }
+
   ws = new WebSocket(wsUrl());
 
   ws.addEventListener('open', () => {
+    setCallStatus('Socket open. Sending helper join request...');
     sendWs({ type: 'join', role: 'assistant', room, key });
-    setStatus('Connected. Waiting for performer...', true);
-    setCallStatus('Audio output unlocked. Waiting for call offer.');
   });
 
   ws.addEventListener('message', async (event) => {
-    const msg = JSON.parse(event.data);
+    let msg;
+    try { msg = JSON.parse(event.data); } catch { return; }
 
     if (msg.type === 'auth-error') {
       setStatus('Wrong secret key.', false);
-      setCallStatus('Access denied. Check your key.');
+      setCallStatus('Access denied. Check your Render ASSISTANT_KEY.');
       connectBtn.disabled = false;
       return;
     }
@@ -111,37 +109,56 @@ function connectSocket() {
     if (msg.type === 'joined') {
       setEditor(msg.note || '');
       setStatus(msg.performerOnline ? 'Connected. Performer online.' : 'Connected. Performer offline.', true);
+      setCallStatus(msg.performerOnline ? 'Joined. Waiting for performer call offer...' : 'Joined. Open performer device and arm mic.');
+      return;
     }
 
     if (msg.type === 'presence') {
       setStatus(msg.performerOnline ? 'Connected. Performer online.' : 'Connected. Performer offline.', true);
       if (!msg.performerOnline) setCallStatus('Performer offline. Waiting.');
+      return;
     }
 
-    if (msg.type === 'note-update') setEditor(msg.note || '');
+    if (msg.type === 'note-update') {
+      setEditor(msg.note || '');
+      return;
+    }
 
-    if (msg.type === 'call-status') setCallStatus(msg.text || 'Call status updated.');
+    if (msg.type === 'call-status') {
+      setCallStatus(msg.text || 'Call status updated.');
+      return;
+    }
 
-    if (msg.type === 'call-offer') await answerCall(msg.offer);
+    if (msg.type === 'call-offer') {
+      await answerCall(msg.offer);
+      return;
+    }
 
     if (msg.type === 'call-candidate' && pc && msg.candidate) {
       try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
     }
   });
 
+  ws.addEventListener('error', () => {
+    setStatus('Socket error.', false);
+    setCallStatus('Could not open WebSocket. Refresh the page.');
+  });
+
   ws.addEventListener('close', () => {
+    closePeer();
+    if (!userClickedJoin) return;
     setStatus('Disconnected. Reconnecting...', false);
-    setCallStatus('Socket disconnected. Reconnecting...');
+    setCallStatus('Socket closed. Reconnecting...');
     reconnectTimer = setTimeout(connectSocket, 1000);
   });
 }
 
 async function answerCall(offer) {
-  await unlockAudioOutput();
   closePeer();
+  unlockAudioOutputSoon();
+  setCallStatus('Call offer received. Answering...');
 
   pc = new RTCPeerConnection({ iceServers: getIceServers() });
-
   pc.addTransceiver('audio', { direction: 'recvonly' });
 
   pc.ontrack = async (event) => {
@@ -149,12 +166,12 @@ async function answerCall(offer) {
     remoteAudio.srcObject = stream;
     remoteAudio.muted = false;
     remoteAudio.volume = 1;
-    setCallStatus('Audio track received. Trying to play.');
+    setCallStatus('Audio track received. Starting playback...');
     try {
       await remoteAudio.play();
       setCallStatus('Call live. You should hear performer audio now.');
     } catch {
-      setCallStatus('Audio track received, but browser blocked playback. Press play on the audio bar.');
+      setCallStatus('Audio track received. Press play on the audio bar if sound is blocked.');
     }
   };
 
@@ -165,6 +182,7 @@ async function answerCall(offer) {
   pc.onconnectionstatechange = () => {
     if (!pc) return;
     const state = pc.connectionState;
+    if (state === 'connecting') setCallStatus('Call connecting...');
     if (state === 'connected') setCallStatus('Call connected. Listening.');
     if (state === 'failed') setCallStatus('Call failed. Press Reconnect Call, then refresh performer.');
     if (state === 'disconnected') setCallStatus('Call disconnected. Waiting to recover.');
@@ -176,8 +194,8 @@ async function answerCall(offer) {
     await pc.setLocalDescription(answer);
     sendWs({ type: 'call-answer', answer });
     setCallStatus('Call answer sent. Connecting audio...');
-  } catch {
-    setCallStatus('Could not answer call. Refresh both devices.');
+  } catch (err) {
+    setCallStatus('Could not answer call: ' + err.message);
   }
 }
 
@@ -206,8 +224,8 @@ noteEditor.addEventListener('input', () => {
   }, 60);
 });
 
-reconnectAudioBtn.addEventListener('click', async () => {
-  await unlockAudioOutput();
+reconnectAudioBtn.addEventListener('click', () => {
+  unlockAudioOutputSoon();
   closePeer();
   setCallStatus('Call reset. Refresh performer or wait for a new offer.');
 });

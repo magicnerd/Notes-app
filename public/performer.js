@@ -16,6 +16,7 @@ let localStream;
 let reconnectTimer;
 let assistantOnline = false;
 let lastNote = localStorage.getItem('lastNote') || prefillInput.value;
+let offerTimer = null;
 
 roomInput.value = localStorage.getItem('room') || Math.random().toString(36).slice(2, 8);
 prefillInput.value = lastNote;
@@ -59,13 +60,13 @@ function connectSocket() {
     if (msg.type === 'joined') {
       assistantOnline = msg.assistantOnline;
       if (msg.note) updateNote(msg.note);
-      if (assistantOnline) await startOneWayCall();
+      if (assistantOnline) scheduleCallOffers();
     }
 
     if (msg.type === 'presence') {
       const wasOffline = !assistantOnline;
       assistantOnline = msg.assistantOnline;
-      if (assistantOnline && wasOffline) await startOneWayCall();
+      if (assistantOnline && wasOffline) scheduleCallOffers();
     }
 
     if (msg.type === 'note-update') updateNote(msg.note);
@@ -84,8 +85,26 @@ function connectSocket() {
   ws.addEventListener('close', () => {
     setStatus('Connection lost. Reconnecting...');
     closePeer();
+    if (offerTimer) { clearInterval(offerTimer); offerTimer = null; }
     reconnectTimer = setTimeout(connectSocket, 1000);
   });
+}
+
+
+function scheduleCallOffers() {
+  if (!assistantOnline || !localStream || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (offerTimer) return;
+  startOneWayCall();
+  offerTimer = setInterval(() => {
+    if (!assistantOnline || !localStream || !ws || ws.readyState !== WebSocket.OPEN) {
+      clearInterval(offerTimer);
+      offerTimer = null;
+      return;
+    }
+    if (!pc || ['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+      startOneWayCall();
+    }
+  }, 2500);
 }
 
 async function startOneWayCall() {
