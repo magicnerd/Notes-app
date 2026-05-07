@@ -32,7 +32,7 @@ const rooms = new Map();
 function getRoom(roomId) {
   if (!rooms.has(roomId)) {
     rooms.set(roomId, {
-      note: 'Shopping list\n\n- Milk\n- Bread\n- Coffee',
+      note: '',
       performer: null,
       assistant: null,
       clients: new Set()
@@ -42,9 +42,7 @@ function getRoom(roomId) {
 }
 
 function send(ws, payload) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(payload));
-  }
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
 }
 
 function broadcast(room, payload, except = null) {
@@ -119,7 +117,6 @@ wss.on('connection', (ws) => {
       return;
     }
 
-    // One-way audio over WebSocket. No WebRTC.
     if (['audio-pcm', 'audio-status'].includes(msg.type)) {
       const target = ws.role === 'performer' ? room.assistant : room.performer;
       send(target, { ...msg, from: ws.role });

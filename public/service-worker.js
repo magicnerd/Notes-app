@@ -1,4 +1,4 @@
-const CACHE = 'notes-private-call-v4';
+const CACHE = 'notes-ws-audio-save-blank-v1';
 const ASSETS = ['/', '/helper', '/index.html', '/helper.html', '/style.css', '/helper.css', '/performer.js', '/helper.js', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', event => {

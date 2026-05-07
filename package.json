@@ -1,7 +1,7 @@
 {
-  "name": "notes-private-call-app",
-  "version": "2.0.0",
-  "description": "Notes style PWA with private one-way performance audio call and live helper editing.",
+  "name": "notes-performance-ws-audio",
+  "version": "2.1.0",
+  "description": "Notes style PWA with websocket performance audio and live helper editing.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

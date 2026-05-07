@@ -55,7 +55,6 @@ async function unlockAudio() {
   }
   if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-  // Tiny silent click to unlock output after the user's join click.
   const buffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
@@ -153,7 +152,7 @@ async function playPcmChunk(msg) {
 
   const now = audioCtx.currentTime;
   if (nextPlayTime < now + 0.04) nextPlayTime = now + 0.04;
-  if (nextPlayTime > now + 1.2) nextPlayTime = now + 0.12; // prevent runaway latency
+  if (nextPlayTime > now + 1.2) nextPlayTime = now + 0.12;
 
   source.start(nextPlayTime);
   nextPlayTime += buffer.duration;
@@ -186,6 +185,6 @@ resetAudioBtn.addEventListener('click', async () => {
 setInterval(() => {
   if (!lastChunkAt) return;
   if (Date.now() - lastChunkAt > 3000) {
-    setAudioStatus(`No audio chunks for ${Math.round((Date.now() - lastChunkAt) / 1000)}s. Refresh performer if needed.`);
+    setAudioStatus(`No audio chunks for ${Math.round((Date.now() - lastChunkAt) / 1000)}s. Bring performer app to foreground if needed.`);
   }
 }, 2000);

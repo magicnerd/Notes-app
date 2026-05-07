@@ -21,7 +21,7 @@ let room;
 let localStream;
 let reconnectTimer;
 let assistantOnline = false;
-let lastNote = localStorage.getItem('lastNote') || prefillInput.value;
+let lastNote = localStorage.getItem('lastNote') || '';
 let activeNoteIsMain = true;
 let realNoteCache = lastNote;
 let audioCtx;
@@ -31,6 +31,8 @@ let pcmStarted = false;
 let pcmChunkCounter = 0;
 let micEnabled = false;
 let isRestartingMic = false;
+let pageWasHidden = false;
+let wakeLock = null;
 
 const TARGET_SAMPLE_RATE = 16000;
 
@@ -56,13 +58,22 @@ function audioStatus(text) {
   sendWs({ type: 'audio-status', text });
 }
 
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch {}
+}
+
 function connectSocket() {
   clearTimeout(reconnectTimer);
   ws = new WebSocket(wsUrl());
 
   ws.addEventListener('open', () => {
     sendWs({ type: 'join', role: 'performer', room });
-    sendWs({ type: 'prefill-note', note: getFullNote() });
+    sendWs({ type: 'prefill-note', note: realNoteCache || lastNote || '' });
     setStatus('Connected. Microphone armed.');
     if (micEnabled) startPcmAudioStream();
   });
@@ -72,7 +83,7 @@ function connectSocket() {
 
     if (msg.type === 'joined') {
       assistantOnline = msg.assistantOnline;
-      if (msg.note && activeNoteIsMain) updateNote(msg.note);
+      if (typeof msg.note === 'string' && msg.note.length > 0 && activeNoteIsMain) updateNote(msg.note);
       audioStatus(micEnabled ? 'Performer joined. Mic active.' : 'Performer joined. Mic muted.');
       if (micEnabled) startPcmAudioStream();
     }
@@ -89,6 +100,7 @@ function connectSocket() {
       realNoteCache = String(msg.note || '');
       lastNote = realNoteCache;
       localStorage.setItem('lastNote', lastNote);
+      prefillInput.value = lastNote;
       updateCurrentRow(lastNote);
       if (activeNoteIsMain) renderNote(lastNote);
     }
@@ -106,7 +118,10 @@ function connectSocket() {
 }
 
 async function enableMic() {
-  if (micEnabled) return true;
+  if (micEnabled && localStream && localStream.getAudioTracks().some(t => t.readyState === 'live')) {
+    await resumeAudioPipeline();
+    return true;
+  }
   if (isRestartingMic) return false;
   isRestartingMic = true;
   try {
@@ -124,6 +139,7 @@ async function enableMic() {
 
     micEnabled = true;
     audioStatus('Mic unmuted. Audio stream starting.');
+    await resumeAudioPipeline();
     startPcmAudioStream();
     return true;
   } catch (err) {
@@ -146,25 +162,34 @@ function disableMic() {
 }
 
 async function toggleMicFromDone() {
-  // This button stays visually normal, but it silently acts as the safety mute.
-  if (micEnabled) {
-    disableMic();
-  } else {
-    await enableMic();
-  }
+  if (micEnabled) disableMic();
+  else await enableMic();
+}
+
+async function resumeAudioPipeline() {
+  try {
+    if (audioCtx && audioCtx.state === 'suspended') await audioCtx.resume();
+  } catch {}
 }
 
 function startPcmAudioStream() {
   if (pcmStarted || !micEnabled || !localStream || !ws || ws.readyState !== WebSocket.OPEN) return;
 
   try {
+    const liveTracks = localStream.getAudioTracks().filter(t => t.readyState === 'live');
+    if (!liveTracks.length) {
+      audioStatus('Mic track stopped. Tap Done twice or restart mic.');
+      micEnabled = false;
+      return;
+    }
+
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) {
       audioStatus('Audio streaming failed: AudioContext is not supported.');
       return;
     }
 
-    audioCtx = audioCtx || new AudioContextClass();
+    audioCtx = new AudioContextClass();
     if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
 
     sourceNode = audioCtx.createMediaStreamSource(localStream);
@@ -187,7 +212,6 @@ function startPcmAudioStream() {
     };
 
     sourceNode.connect(processor);
-    // Some browsers need processor connected to destination to keep it alive.
     processor.connect(audioCtx.destination);
     pcmStarted = true;
     audioStatus('Microphone audio stream started.');
@@ -200,8 +224,26 @@ function stopPcmAudioStream() {
   pcmStarted = false;
   try { if (processor) processor.disconnect(); } catch {}
   try { if (sourceNode) sourceNode.disconnect(); } catch {}
+  try { if (audioCtx && audioCtx.state !== 'closed') audioCtx.close(); } catch {}
   processor = null;
   sourceNode = null;
+  audioCtx = null;
+}
+
+async function recoverAudioAfterPause(reason = 'resume') {
+  if (!micEnabled) return;
+  stopPcmAudioStream();
+
+  const hasLiveTrack = localStream && localStream.getAudioTracks().some(t => t.readyState === 'live');
+  if (!hasLiveTrack) {
+    audioStatus('Mic track ended after ' + reason + '. Restarting mic...');
+    await enableMic();
+    return;
+  }
+
+  audioStatus('Recovering audio after ' + reason + '...');
+  await resumeAudioPipeline();
+  startPcmAudioStream();
 }
 
 function downsampleBuffer(buffer, inputRate, outputRate) {
@@ -261,6 +303,7 @@ function updateNote(text) {
   lastNote = String(text || '');
   realNoteCache = lastNote;
   localStorage.setItem('lastNote', lastNote);
+  prefillInput.value = lastNote;
   renderNote(lastNote);
   updateCurrentRow(lastNote);
 }
@@ -276,7 +319,7 @@ function updateCurrentRow(text) {
 
 function showMainNote() {
   activeNoteIsMain = true;
-  renderNote(realNoteCache || lastNote);
+  renderNote(realNoteCache || lastNote || '');
   notesList.classList.add('hidden');
   notesApp.classList.remove('hidden');
 }
@@ -291,6 +334,9 @@ function showDummyNote(title, body) {
 function showNotesList() {
   if (activeNoteIsMain) {
     realNoteCache = getFullNote();
+    lastNote = realNoteCache;
+    localStorage.setItem('lastNote', lastNote);
+    prefillInput.value = lastNote;
     updateCurrentRow(realNoteCache);
   }
   notesApp.classList.add('hidden');
@@ -304,7 +350,8 @@ armBtn.addEventListener('click', async () => {
 
     room = roomInput.value.trim() || 'default';
     localStorage.setItem('room', room);
-    updateNote(prefillInput.value);
+
+    updateNote(prefillInput.value || lastNote || '');
 
     const micReady = await enableMic();
     if (!micReady) throw new Error('Microphone could not be started.');
@@ -312,6 +359,7 @@ armBtn.addEventListener('click', async () => {
     connectSocket();
     setup.classList.add('hidden');
     notesApp.classList.remove('hidden');
+    await requestWakeLock();
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/service-worker.js').catch(() => {});
@@ -343,6 +391,7 @@ notesApp.addEventListener('touchstart', (event) => {
 
 function enterBlackout() {
   blackout.classList.remove('hidden');
+  requestWakeLock();
 }
 
 function exitBlackout() {
@@ -351,6 +400,27 @@ function exitBlackout() {
 
 blackout.addEventListener('touchstart', exitBlackout, { passive: true });
 blackout.addEventListener('click', exitBlackout);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    pageWasHidden = true;
+    audioStatus('Performer app hidden. iOS may pause audio.');
+  } else if (pageWasHidden) {
+    pageWasHidden = false;
+    requestWakeLock();
+    setTimeout(() => recoverAudioAfterPause('app return'), 150);
+  }
+});
+
+window.addEventListener('pageshow', () => {
+  requestWakeLock();
+  setTimeout(() => recoverAudioAfterPause('page show'), 150);
+});
+
+window.addEventListener('focus', () => {
+  requestWakeLock();
+  setTimeout(() => recoverAudioAfterPause('focus'), 150);
+});
 
 window.addEventListener('beforeunload', () => {
   disableMic();

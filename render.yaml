@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: notes-private-call-app
+    name: notes-performance-app
     env: node
     plan: free
     buildCommand: npm install

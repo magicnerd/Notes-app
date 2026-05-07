@@ -15,5 +15,4 @@ button { position: relative; z-index: 99999; pointer-events: auto; cursor: point
 .disconnected { color: #ff8c8c; }
 .call-status { margin: 6px 0 0; color: #c9c9c9; font-size: 13px; }
 .top-row { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-audio { width: 100%; margin: 14px 0; }
 #noteEditor { height: min(62dvh, 620px); resize: vertical; line-height: 1.35; }
