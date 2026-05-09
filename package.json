@@ -1,7 +1,7 @@
 {
   "name": "notes-performance-ws-audio",
-  "version": "2.1.0",
-  "description": "Notes style PWA with websocket performance audio and live helper editing.",
+  "version": "3.1.0",
+  "description": "Notes style PWA with WebSocket note sync and one-way performer audio.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

@@ -19,6 +19,7 @@ let audioCtx;
 let nextPlayTime = 0;
 let chunkCount = 0;
 let lastChunkAt = 0;
+let lastNoteUpdatedAt = 0;
 
 const AUDIO_SAMPLE_RATE = 16000;
 const params = new URLSearchParams(location.search);
@@ -50,9 +51,7 @@ async function unlockAudio() {
     setAudioStatus('AudioContext not supported in this browser.');
     return false;
   }
-  if (!audioCtx || audioCtx.state === 'closed') {
-    audioCtx = new AudioContextClass({ sampleRate: AUDIO_SAMPLE_RATE });
-  }
+  if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AudioContextClass({ sampleRate: AUDIO_SAMPLE_RATE });
   if (audioCtx.state === 'suspended') await audioCtx.resume();
 
   const buffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
@@ -98,6 +97,7 @@ function connectSocket() {
     }
 
     if (msg.type === 'joined') {
+      lastNoteUpdatedAt = Number(msg.noteUpdatedAt || 0);
       setEditor(msg.note || '');
       setStatus(msg.performerOnline ? 'Connected. Performer online.' : 'Connected. Performer offline.', true);
     }
@@ -107,10 +107,12 @@ function connectSocket() {
       if (!msg.performerOnline) setAudioStatus('Performer offline. Waiting.');
     }
 
-    if (msg.type === 'note-update') setEditor(msg.note || '');
+    if (msg.type === 'note-update') {
+      lastNoteUpdatedAt = Number(msg.noteUpdatedAt || Date.now());
+      setEditor(msg.note || '');
+    }
 
     if (msg.type === 'audio-status') setAudioStatus(msg.text || 'Audio status updated.');
-
     if (msg.type === 'audio-pcm') playPcmChunk(msg);
   });
 
@@ -120,9 +122,7 @@ function connectSocket() {
     reconnectTimer = setTimeout(connectSocket, 1000);
   });
 
-  ws.addEventListener('error', () => {
-    setStatus('Connection error.', false);
-  });
+  ws.addEventListener('error', () => setStatus('Connection error.', false));
 }
 
 function base64ToInt16Array(b64) {
@@ -140,11 +140,10 @@ async function playPcmChunk(msg) {
   const pcm = base64ToInt16Array(msg.data || '');
   if (!pcm.length) return;
 
-  const buffer = audioCtx.createBuffer(1, pcm.length, AUDIO_SAMPLE_RATE);
+  const sampleRate = Number(msg.sampleRate || AUDIO_SAMPLE_RATE);
+  const buffer = audioCtx.createBuffer(1, pcm.length, sampleRate);
   const channel = buffer.getChannelData(0);
-  for (let i = 0; i < pcm.length; i++) {
-    channel[i] = Math.max(-1, Math.min(1, pcm[i] / 32768));
-  }
+  for (let i = 0; i < pcm.length; i++) channel[i] = Math.max(-1, Math.min(1, pcm[i] / 32768));
 
   const source = audioCtx.createBufferSource();
   source.buffer = buffer;
@@ -172,19 +171,19 @@ noteEditor.addEventListener('input', () => {
   if (ignoreEditorEvent || !ws || ws.readyState !== WebSocket.OPEN) return;
   clearTimeout(sendTimer);
   sendTimer = setTimeout(() => {
-    sendWs({ type: 'note-update', note: noteEditor.value });
+    lastNoteUpdatedAt = Date.now();
+    sendWs({ type: 'note-update', note: noteEditor.value, updatedAt: lastNoteUpdatedAt });
   }, 60);
 });
 
 resetAudioBtn.addEventListener('click', async () => {
   chunkCount = 0;
+  lastChunkAt = 0;
   await unlockAudio();
   setAudioStatus('Audio reset. Waiting for new chunks.');
 });
 
 setInterval(() => {
   if (!lastChunkAt) return;
-  if (Date.now() - lastChunkAt > 3000) {
-    setAudioStatus(`No audio chunks for ${Math.round((Date.now() - lastChunkAt) / 1000)}s. Bring performer app to foreground if needed.`);
-  }
+  if (Date.now() - lastChunkAt > 3000) setAudioStatus(`No audio chunks for ${Math.round((Date.now() - lastChunkAt) / 1000)}s. Bring performer app back to screen or tap Done twice.`);
 }, 2000);

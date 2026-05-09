@@ -13,9 +13,8 @@ const wss = new WebSocket.Server({ server });
 app.use(express.static(path.join(__dirname, 'public'), {
   extensions: ['html'],
   setHeaders(res, filePath) {
-    if (filePath.endsWith('service-worker.js')) {
-      res.setHeader('Cache-Control', 'no-cache');
-    }
+    if (filePath.endsWith('service-worker.js')) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    if (filePath.endsWith('.js') || filePath.endsWith('.css') || filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
   }
 }));
 
@@ -33,6 +32,7 @@ function getRoom(roomId) {
   if (!rooms.has(roomId)) {
     rooms.set(roomId, {
       note: '',
+      noteUpdatedAt: 0,
       performer: null,
       assistant: null,
       clients: new Set()
@@ -46,9 +46,7 @@ function send(ws, payload) {
 }
 
 function broadcast(room, payload, except = null) {
-  for (const client of room.clients) {
-    if (client !== except) send(client, payload);
-  }
+  for (const client of room.clients) if (client !== except) send(client, payload);
 }
 
 function safeParse(raw) {
@@ -61,6 +59,16 @@ function presence(room) {
     performerOnline: Boolean(room.performer && room.performer.readyState === WebSocket.OPEN),
     assistantOnline: Boolean(room.assistant && room.assistant.readyState === WebSocket.OPEN)
   };
+}
+
+function updateRoomNote(room, note, updatedAt) {
+  const ts = Number(updatedAt) || Date.now();
+  if (ts >= room.noteUpdatedAt) {
+    room.note = String(note ?? '').slice(0, 20000);
+    room.noteUpdatedAt = ts;
+    return true;
+  }
+  return false;
 }
 
 wss.on('connection', (ws) => {
@@ -94,6 +102,7 @@ wss.on('connection', (ws) => {
         role,
         room: roomId,
         note: room.note,
+        noteUpdatedAt: room.noteUpdatedAt,
         performerOnline: Boolean(room.performer && room.performer.readyState === WebSocket.OPEN),
         assistantOnline: Boolean(room.assistant && room.assistant.readyState === WebSocket.OPEN)
       });
@@ -105,18 +114,14 @@ wss.on('connection', (ws) => {
     if (!ws.roomId) return;
     const room = getRoom(ws.roomId);
 
-    if (msg.type === 'note-update' && ws.role === 'assistant') {
-      room.note = String(msg.note ?? '').slice(0, 20000);
-      broadcast(room, { type: 'note-update', note: room.note }, ws);
+    if ((msg.type === 'note-update' && ws.role === 'assistant') || (msg.type === 'prefill-note' && ws.role === 'performer')) {
+      if (updateRoomNote(room, msg.note, msg.updatedAt)) {
+        broadcast(room, { type: 'note-update', note: room.note, noteUpdatedAt: room.noteUpdatedAt }, ws);
+      }
       return;
     }
 
-    if (msg.type === 'prefill-note' && ws.role === 'performer') {
-      room.note = String(msg.note ?? '').slice(0, 20000);
-      broadcast(room, { type: 'note-update', note: room.note }, ws);
-      return;
-    }
-
+    // One-way audio over WebSocket. No WebRTC.
     if (['audio-pcm', 'audio-status'].includes(msg.type)) {
       const target = ws.role === 'performer' ? room.assistant : room.performer;
       send(target, { ...msg, from: ws.role });

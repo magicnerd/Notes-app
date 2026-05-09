@@ -2,7 +2,6 @@ services:
   - type: web
     name: notes-performance-app
     env: node
-    plan: free
     buildCommand: npm install
     startCommand: npm start
     envVars:

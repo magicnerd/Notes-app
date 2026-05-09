@@ -9,7 +9,7 @@
   <title>Notes</title>
   <link rel="manifest" href="/manifest.json" />
   <link rel="apple-touch-icon" href="/icon.svg" />
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v=stable3" />
 </head>
 <body>
   <section id="setup" class="setup-screen">
@@ -20,7 +20,7 @@
         <input id="roomInput" autocomplete="off" autocapitalize="none" />
       </label>
       <label>Starting note
-        <textarea id="prefillInput" rows="5" placeholder=""></textarea>
+        <textarea id="prefillInput" rows="5" placeholder="Blank note"></textarea>
       </label>
       <button id="armBtn">Allow Microphone and Open Notes</button>
       <p id="setupStatus" class="setup-status">Not connected.</p>
@@ -42,19 +42,19 @@
         <div class="row-title" id="currentRowTitle">New Note</div>
         <div class="row-preview" id="currentRowPreview">No additional text</div>
       </button>
-      <button class="note-row dummy-note" type="button" data-title="Ideas" data-body="Film backyard photo challenge&#10;&#10;- Rain on leaves&#10;- Low angle shadows&#10;- Bottle reflection">
+      <button class="note-row dummy-note" type="button" data-title="Ideas" data-body="Film backyard photo challenge\n\n- Rain on leaves\n- Low angle shadows\n- Bottle reflection">
         <div class="row-title">Ideas</div>
         <div class="row-preview">Film backyard photo challenge</div>
       </button>
-      <button class="note-row dummy-note" type="button" data-title="Gym" data-body="Legs&#10;&#10;Smith squats&#10;RDLs&#10;Calves&#10;Stretch hips">
+      <button class="note-row dummy-note" type="button" data-title="Gym" data-body="Legs\n\nSmith squats\nRDLs\nCalves\nStretch hips">
         <div class="row-title">Gym</div>
         <div class="row-preview">Legs, RDLs, calves</div>
       </button>
-      <button class="note-row dummy-note" type="button" data-title="Books" data-body="To read&#10;&#10;Atomic Habits&#10;Deep Work&#10;The War of Art">
+      <button class="note-row dummy-note" type="button" data-title="Books" data-body="To read\n\nAtomic Habits\nDeep Work\nThe War of Art">
         <div class="row-title">Books</div>
         <div class="row-preview">To read</div>
       </button>
-      <button class="note-row dummy-note" type="button" data-title="Packing" data-body="Hike packing&#10;&#10;Headtorch&#10;Rain jacket&#10;Battery bank&#10;First aid">
+      <button class="note-row dummy-note" type="button" data-title="Packing" data-body="Hike packing\n\nHeadtorch\nRain jacket\nBattery bank\nFirst aid">
         <div class="row-title">Packing</div>
         <div class="row-preview">Headtorch, rain jacket</div>
       </button>
@@ -74,7 +74,7 @@
     </header>
 
     <section class="note-sheet">
-      <input id="noteTitle" class="note-title" aria-label="Note title" />
+      <input id="noteTitle" class="note-title" aria-label="Note title" placeholder="" />
       <textarea id="noteBody" class="note-body" aria-label="Note body"></textarea>
     </section>
 
@@ -84,6 +84,6 @@
 
   <div id="blackout" class="blackout hidden" aria-hidden="true"></div>
 
-  <script src="/performer.js"></script>
+  <script src="/performer.js?v=stable3"></script>
 </body>
 </html>

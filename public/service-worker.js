@@ -1,5 +1,5 @@
-const CACHE = 'notes-ws-audio-save-blank-v1';
-const ASSETS = ['/', '/helper', '/index.html', '/helper.html', '/style.css', '/helper.css', '/performer.js', '/helper.js', '/manifest.json', '/icon.svg'];
+const CACHE = 'notes-ws-audio-stable3';
+const ASSETS = ['/', '/helper', '/index.html', '/helper.html', '/style.css?v=stable3', '/helper.css?v=stable3', '/performer.js?v=stable3', '/helper.js?v=stable3', '/manifest.json', '/icon.svg'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting()));
