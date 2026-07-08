@@ -1,14 +1,17 @@
 {
-  "name": "notes-performance-ws-audio",
-  "version": "3.1.0",
-  "description": "Notes style PWA with WebSocket note sync and one-way performer audio.",
-  "main": "server.js",
+  "name": "notes-performance-sellable",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.3",
-    "ws": "^8.16.0"
+    "@supabase/supabase-js": "^2.45.4",
+    "express": "^4.19.2",
+    "ws": "^8.18.0",
+    "cookie-parser": "^1.4.6"
   },
   "engines": {
     "node": ">=18"
