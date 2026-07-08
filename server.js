@@ -5,9 +5,10 @@ import { WebSocketServer } from 'ws';
 import { createClient } from '@supabase/supabase-js';
 
 const PORT = process.env.PORT || 3000;
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const cleanEnv = (v) => String(v || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\/+$/, '');
+const SUPABASE_URL = cleanEnv(process.env.SUPABASE_URL);
+const SUPABASE_ANON_KEY = cleanEnv(process.env.SUPABASE_ANON_KEY);
+const SUPABASE_SERVICE_ROLE_KEY = cleanEnv(process.env.SUPABASE_SERVICE_ROLE_KEY);
 const APP_BASE_URL = process.env.APP_BASE_URL || `http://localhost:${PORT}`;
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -106,6 +107,7 @@ async function activateUser(user, rawCode) {
 }
 
 app.post('/api/signup', async (req, res) => {
+  let stage = 'start';
   try {
     const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '');
@@ -114,21 +116,30 @@ app.post('/api/signup', async (req, res) => {
     if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
 
     let createdUser = null;
+    stage = 'admin.createUser';
     const created = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
     if (created.error && !String(created.error.message || '').toLowerCase().includes('already')) {
-      return res.status(400).json({ error: created.error.message });
+      console.error('Signup failed at', stage, created.error);
+      return res.status(400).json({ error: created.error.message, stage });
     }
     createdUser = created.data?.user || null;
 
+    stage = 'signInWithPassword';
     const signed = await supabasePublic.auth.signInWithPassword({ email, password });
-    if (signed.error) return res.status(400).json({ error: signed.error.message });
+    if (signed.error) {
+      console.error('Signup failed at', stage, signed.error);
+      return res.status(400).json({ error: signed.error.message, stage });
+    }
 
     const user = signed.data.user || createdUser;
+    stage = 'activateUser';
     if (code) await activateUser(user, code);
 
     res.json({ access_token: signed.data.session.access_token, user: { id: user.id, email: user.email } });
   } catch (e) {
-    res.status(400).json({ error: e.message || 'Signup failed.' });
+    console.error('Signup exception at', stage, e);
+    const cause = e?.cause?.message || e?.cause?.code || '';
+    res.status(400).json({ error: e.message || 'Signup failed.', stage, cause });
   }
 });
 
@@ -145,7 +156,31 @@ app.post('/api/login', async (req, res) => {
 });
 
 app.get('/config', (req, res) => {
-  res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY });
+  res.json({
+    supabaseUrl: SUPABASE_URL,
+    supabaseAnonKey: SUPABASE_ANON_KEY,
+    envOk: {
+      url: !!SUPABASE_URL,
+      anonKey: !!SUPABASE_ANON_KEY,
+      serviceRoleKey: !!SUPABASE_SERVICE_ROLE_KEY
+    },
+    keyLengths: {
+      anon: SUPABASE_ANON_KEY.length,
+      service: SUPABASE_SERVICE_ROLE_KEY.length
+    },
+    build: 'fix1-trim-debug'
+  });
+});
+
+app.get('/api/debug-supabase', async (req, res) => {
+  try {
+    const url = `${SUPABASE_URL}/auth/v1/settings`;
+    const r = await fetch(url, { headers: { apikey: SUPABASE_ANON_KEY } });
+    const text = await r.text();
+    res.status(r.ok ? 200 : 500).json({ ok: r.ok, status: r.status, text: text.slice(0, 500), build: 'fix1-trim-debug' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, cause: e?.cause?.message || e?.cause?.code || '', build: 'fix1-trim-debug' });
+  }
 });
 
 app.get('/api/me', async (req, res) => {
