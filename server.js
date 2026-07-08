@@ -18,6 +18,10 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
 
+const supabasePublic = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false }
+});
+
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static('public'));
@@ -65,6 +69,81 @@ async function getUserFromReq(req, res) {
   return data.user;
 }
 
+
+async function activateUser(user, rawCode) {
+  const code = String(rawCode || '').trim().toUpperCase();
+  if (!code) throw new Error('Enter an activation code.');
+
+  const { data: activation, error: codeErr } = await supabase
+    .from('activation_codes')
+    .select('*')
+    .eq('code', code)
+    .eq('active', true)
+    .maybeSingle();
+
+  if (codeErr) throw new Error(codeErr.message);
+  if (!activation) throw new Error('That code is not valid.');
+  if (activation.current_uses >= activation.max_uses) throw new Error('That code has no uses left.');
+
+  const { data: existing } = await supabase
+    .from('user_profiles')
+    .select('*')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (existing?.activated) return;
+
+  const { error: profileErr } = await supabase
+    .from('user_profiles')
+    .upsert({ id: user.id, email: user.email, activated: true, activation_code: code }, { onConflict: 'id' });
+  if (profileErr) throw new Error(profileErr.message);
+
+  const { error: useErr } = await supabase
+    .from('activation_codes')
+    .update({ current_uses: activation.current_uses + 1 })
+    .eq('id', activation.id);
+  if (useErr) throw new Error(useErr.message);
+}
+
+app.post('/api/signup', async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const code = String(req.body.code || '').trim();
+    if (!email || !password) return res.status(400).json({ error: 'Enter email and password.' });
+    if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+
+    let createdUser = null;
+    const created = await supabase.auth.admin.createUser({ email, password, email_confirm: true });
+    if (created.error && !String(created.error.message || '').toLowerCase().includes('already')) {
+      return res.status(400).json({ error: created.error.message });
+    }
+    createdUser = created.data?.user || null;
+
+    const signed = await supabasePublic.auth.signInWithPassword({ email, password });
+    if (signed.error) return res.status(400).json({ error: signed.error.message });
+
+    const user = signed.data.user || createdUser;
+    if (code) await activateUser(user, code);
+
+    res.json({ access_token: signed.data.session.access_token, user: { id: user.id, email: user.email } });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Signup failed.' });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const signed = await supabasePublic.auth.signInWithPassword({ email, password });
+    if (signed.error) return res.status(400).json({ error: signed.error.message });
+    res.json({ access_token: signed.data.session.access_token, user: { id: signed.data.user.id, email: signed.data.user.email } });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Login failed.' });
+  }
+});
+
 app.get('/config', (req, res) => {
   res.json({ supabaseUrl: SUPABASE_URL, supabaseAnonKey: SUPABASE_ANON_KEY });
 });
@@ -90,42 +169,12 @@ app.get('/api/me', async (req, res) => {
 app.post('/api/activate', async (req, res) => {
   const user = await getUserFromReq(req, res);
   if (!user) return;
-  const code = String(req.body.code || '').trim().toUpperCase();
-  if (!code) return res.status(400).json({ error: 'Enter an activation code.' });
-
-  const { data: activation, error: codeErr } = await supabase
-    .from('activation_codes')
-    .select('*')
-    .eq('code', code)
-    .eq('active', true)
-    .maybeSingle();
-
-  if (codeErr) return res.status(500).json({ error: codeErr.message });
-  if (!activation) return res.status(400).json({ error: 'That code is not valid.' });
-  if (activation.current_uses >= activation.max_uses) return res.status(400).json({ error: 'That code has no uses left.' });
-
-  const { data: existing } = await supabase
-    .from('user_profiles')
-    .select('*')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (existing?.activated) {
-    return res.json({ ok: true, message: 'Account already activated.' });
+  try {
+    await activateUser(user, req.body.code);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Activation failed.' });
   }
-
-  const { error: profileErr } = await supabase
-    .from('user_profiles')
-    .upsert({ id: user.id, email: user.email, activated: true, activation_code: code }, { onConflict: 'id' });
-  if (profileErr) return res.status(500).json({ error: profileErr.message });
-
-  const { error: useErr } = await supabase
-    .from('activation_codes')
-    .update({ current_uses: activation.current_uses + 1 })
-    .eq('id', activation.id);
-  if (useErr) return res.status(500).json({ error: useErr.message });
-
-  res.json({ ok: true });
 });
 
 async function requireActivated(req, res) {
