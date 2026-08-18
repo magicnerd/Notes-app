@@ -5,6 +5,8 @@ let audioCtx;
 let nextTime = 0;
 let audioEnabled = false;
 let lastAudioStatus = false;
+let currentSessionId = null;
+const activeSources = new Set();
 
 const $ = s => document.querySelector(s);
 
@@ -21,7 +23,7 @@ function connect() {
     if (m.type === 'joined') {
       status(`Connected to ${m.room.name}`, true);
       $('#note').value = m.room.current_note || '';
-      resetAudioQueue();
+      resetAudioQueue('joined');
     }
 
     if (m.type === 'presence') {
@@ -32,11 +34,21 @@ function connect() {
       $('#note').value = m.note;
     }
 
+    if (m.type === 'audio-reset') {
+      currentSessionId = m.sessionId || null;
+      resetAudioQueue('reset');
+    }
+
     if (m.type === 'audio-status') {
       $('#light').classList.toggle('on', m.on);
 
+      if (m.sessionId && m.sessionId !== currentSessionId) {
+        currentSessionId = m.sessionId;
+        resetAudioQueue('new-session');
+      }
+
       if (m.on !== lastAudioStatus) {
-        resetAudioQueue();
+        resetAudioQueue(m.on ? 'unmuted' : 'muted');
       }
 
       lastAudioStatus = !!m.on;
@@ -53,7 +65,7 @@ function connect() {
 
   ws.onclose = () => {
     status('Reconnecting...', false);
-    resetAudioQueue();
+    resetAudioQueue('socket-close');
     setTimeout(connect, 1000);
   };
 }
@@ -86,16 +98,22 @@ document.querySelectorAll('[data-t]').forEach(b => {
 
 $('#audioBtn').onclick = async () => {
   if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
   }
 
   await audioCtx.resume();
   audioEnabled = true;
-  resetAudioQueue();
+  resetAudioQueue('enable-audio');
   $('#audioBtn').textContent = 'Audio enabled';
 };
 
-function resetAudioQueue() {
+function resetAudioQueue(reason = '') {
+  for (const src of activeSources) {
+    try { src.stop(0); } catch {}
+    try { src.disconnect(); } catch {}
+  }
+  activeSources.clear();
+
   if (audioCtx) {
     nextTime = audioCtx.currentTime + 0.03;
   } else {
@@ -106,11 +124,16 @@ function resetAudioQueue() {
 function play(m) {
   if (!audioEnabled || !audioCtx) return;
 
+  if (m.sessionId && m.sessionId !== currentSessionId) {
+    currentSessionId = m.sessionId;
+    resetAudioQueue('chunk-new-session');
+  }
+
   const now = audioCtx.currentTime;
 
-  // If the queue is too far behind or ahead, snap it back to live.
-  if (!nextTime || nextTime < now - 0.1 || nextTime > now + 0.6) {
-    nextTime = now + 0.03;
+  // Never let queued audio build up. Snap back to live if it drifts.
+  if (!nextTime || nextTime < now + 0.01 || nextTime > now + 0.35) {
+    resetAudioQueue('latency-snap');
   }
 
   const bytes = Uint8Array.from(atob(m.data), c => c.charCodeAt(0));
@@ -125,6 +148,12 @@ function play(m) {
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
   src.connect(audioCtx.destination);
+  activeSources.add(src);
+
+  src.onended = () => {
+    activeSources.delete(src);
+    try { src.disconnect(); } catch {}
+  };
 
   src.start(nextTime);
   nextTime += buf.duration;

@@ -1,7 +1,10 @@
 const code = new URLSearchParams(location.search).get('room') || '';
-let ws, mediaStream, audioCtx, processor, micOn = false;
+
+let ws, mediaStream, audioCtx, processor, audioSource, micOn = false;
 let realNoteCache = localStorage.getItem('lastNote') || '';
 let viewingReal = true;
+let audioSessionId = 0;
+let warmupChunks = 0;
 
 const $ = s => document.querySelector(s);
 const fakeNotes = {
@@ -25,6 +28,10 @@ function connect() {
         receiveRealNote(m.room.current_note);
       } else if ($('#startNote').value.trim()) {
         sendNote($('#startNote').value);
+      }
+      if (micOn) {
+        sendAudioReset();
+        sendAudioStatus();
       }
     }
 
@@ -80,33 +87,69 @@ async function start(withMic) {
   if (withMic) await startMic();
 }
 
+function safeDisconnectAudioNodes() {
+  try { if (processor) processor.onaudioprocess = null; } catch {}
+  try { if (processor) processor.disconnect(); } catch {}
+  try { if (audioSource) audioSource.disconnect(); } catch {}
+  processor = null;
+  audioSource = null;
+}
+
+async function hardReleaseAudioContext() {
+  const ctx = audioCtx;
+  audioCtx = null;
+  if (ctx && ctx.state !== 'closed') {
+    try { await ctx.close(); } catch {}
+  }
+}
+
 async function startMic() {
   try {
+    // Hard restart, but every restart gets a new session id so the helper drops old queued audio.
+    stopMic(false);
+
+    audioSessionId = Date.now();
+    warmupChunks = 3;
+    sendAudioReset();
+
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
 
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const src = audioCtx.createMediaStreamSource(mediaStream);
-    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+    audioSource = audioCtx.createMediaStreamSource(mediaStream);
+    processor = audioCtx.createScriptProcessor(2048, 1, 1);
 
     processor.onaudioprocess = e => {
       if (!micOn || ws?.readyState !== 1) return;
+
+      // Drop the first little bit after iOS opens the mic because it can be glitchy.
+      if (warmupChunks > 0) {
+        warmupChunks--;
+        return;
+      }
+
       const input = e.inputBuffer.getChannelData(0);
       const pcm = downsample(input, audioCtx.sampleRate, 16000);
       ws.send(JSON.stringify({
         type: 'audio-pcm',
         sampleRate: 16000,
+        sessionId: audioSessionId,
         data: btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)))
       }));
     };
 
-    src.connect(processor);
+    audioSource.connect(processor);
     processor.connect(audioCtx.destination);
     micOn = true;
+    sendAudioReset();
     sendAudioStatus();
   } catch (e) {
     setConn('Mic blocked or unavailable', false);
+    micOn = false;
+    sendAudioStatus();
   }
 }
 
@@ -134,15 +177,34 @@ function downsample(buffer, from, to) {
   return out;
 }
 
-function sendAudioStatus() {
-  if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'audio-status', on: micOn }));
+function sendAudioReset() {
+  if (ws?.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'audio-reset', sessionId: audioSessionId }));
+  }
 }
 
-function stopMic() {
+function sendAudioStatus() {
+  if (ws?.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'audio-status', on: micOn, sessionId: audioSessionId }));
+  }
+}
+
+function stopMic(notify = true) {
   micOn = false;
-  if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+  audioSessionId = Date.now();
+  warmupChunks = 0;
+
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+  }
   mediaStream = null;
-  sendAudioStatus();
+  safeDisconnectAudioNodes();
+  hardReleaseAudioContext();
+
+  if (notify) {
+    sendAudioReset();
+    sendAudioStatus();
+  }
 }
 
 $('#startBtn').onclick = () => start(true);
@@ -154,7 +216,7 @@ $('#note').oninput = e => {
 
 $('#doneBtn').onclick = async () => {
   if (micOn) {
-    stopMic();
+    stopMic(true);
     $('#doneBtn').textContent = 'Edit';
   } else {
     await startMic();
