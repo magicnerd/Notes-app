@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>Notes</title>
+  <link rel="stylesheet" href="/style.css?v=latency-fix2">
+</head>
+<body class="ios">
+  <div id="setup" class="setup">
+    <h1>Notes</h1>
+    <p>This starts the live note room. Microphone audio only starts after you press the button.</p>
+    <textarea id="startNote" placeholder="Optional starting note"></textarea>
+    <br><br>
+    <button class="primary" id="startBtn">Start performance and mic</button>
+    <button id="noMicBtn">Start without mic</button>
+    <p id="setupStatus" class="status"></p>
+  </div>
+
+  <div id="app" class="hidden">
+    <div id="list" class="hidden">
+      <div class="notesTop"><span>Folders</span><b>Notes</b><span>•••</span></div>
+      <div class="listItem" id="openReal">
+        <div class="listTitle">Performance Notes</div>
+        <div class="listSub">Just now</div>
+      </div>
+      <div class="listItem" id="openIdeas">
+        <div class="listTitle">Ideas</div>
+        <div class="listSub">old notes and reminders</div>
+      </div>
+      <div class="listItem" id="openShopping">
+        <div class="listTitle">Shopping</div>
+        <div class="listSub">milk, bread, coffee</div>
+      </div>
+    </div>
+
+    <div id="noteView">
+      <div class="notesTop">
+        <button class="ghost" id="backBtn">‹ Notes</button>
+        <span class="status" id="conn" style="display:none"></span>
+        <button class="ghost" id="doneBtn">Done</button>
+      </div>
+      <textarea id="note" class="noteArea" spellcheck="false"></textarea>
+    </div>
+  </div>
+
+  <div id="black" class="blackScreen hidden"></div>
+  <script src="/performer.js?v=latency-fix2"></script>
+</body>
+</html>
