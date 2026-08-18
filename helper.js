@@ -1,53 +1,31 @@
 const code = new URLSearchParams(location.search).get('room') || '';
-
-let ws;
-let audioCtx = null;
-let nextTime = 0;
-let audioEnabled = false;
-let activeSources = new Set();
-let lastAudioStatus = false;
-
-const MAX_LEAD_SECONDS = 0.45;
-const START_BUFFER_SECONDS = 0.035;
-
-const $ = (s) => document.querySelector(s);
+let ws, audioCtx, nextTime = 0, audioEnabled = false;
+const scheduledSources = new Set();
+const $ = s => document.querySelector(s);
 
 function connect() {
   ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
 
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ type: 'join', role: 'helper', code }));
-  };
+  ws.onopen = () => ws.send(JSON.stringify({ type: 'join', role: 'helper', code }));
 
-  ws.onmessage = (e) => {
+  ws.onmessage = e => {
     const m = JSON.parse(e.data);
 
     if (m.type === 'joined') {
       status(`Connected to ${m.room.name}`, true);
       $('#note').value = m.room.current_note || '';
-    }
-
-    if (m.type === 'presence') {
-      status(`Performer ${m.performers ? 'online' : 'offline'} · Helpers ${m.helpers}`, !!m.performers);
-    }
-
-    if (m.type === 'note-update') {
-      $('#note').value = m.note;
-    }
-
-    if (m.type === 'audio-status') {
-      lastAudioStatus = !!m.on;
-      $('#light').classList.toggle('on', lastAudioStatus);
-
-      // Critical latency fix:
-      // whenever the performer mutes or unmutes, dump anything queued.
       resetAudioQueue();
     }
 
-    if (m.type === 'audio-pcm') {
-      play(m);
+    if (m.type === 'presence') status(`Performer ${m.performers ? 'online' : 'offline'} · Helpers ${m.helpers}`, !!m.performers);
+    if (m.type === 'note-update') $('#note').value = m.note;
+
+    if (m.type === 'audio-status') {
+      $('#light').classList.toggle('on', m.on);
+      resetAudioQueue();
     }
 
+    if (m.type === 'audio-pcm') play(m);
     if (m.type === 'error') status(m.error, false);
   };
 
@@ -64,9 +42,7 @@ function status(t, ok) {
 }
 
 function sendNote() {
-  if (ws?.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'note-update', note: $('#note').value }));
-  }
+  if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'note-update', note: $('#note').value }));
 }
 
 $('#note').addEventListener('input', sendNote);
@@ -76,16 +52,14 @@ $('#clearBtn').onclick = () => {
   sendNote();
 };
 
-document.querySelectorAll('[data-t]').forEach((b) => {
-  b.onclick = () => {
-    $('#note').value = b.dataset.t;
-    $('#note').focus();
-    sendNote();
-  };
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+  $('#note').value = b.dataset.t;
+  $('#note').focus();
+  sendNote();
 });
 
 $('#audioBtn').onclick = async () => {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   await audioCtx.resume();
   audioEnabled = true;
   resetAudioQueue();
@@ -93,70 +67,43 @@ $('#audioBtn').onclick = async () => {
 };
 
 function resetAudioQueue() {
-  if (audioCtx) nextTime = audioCtx.currentTime + START_BUFFER_SECONDS;
-  else nextTime = 0;
-
-  for (const src of activeSources) {
+  if (!audioCtx) return;
+  for (const src of scheduledSources) {
     try { src.stop(0); } catch {}
-    try { src.disconnect(); } catch {}
   }
-
-  activeSources.clear();
+  scheduledSources.clear();
+  nextTime = audioCtx.currentTime + 0.03;
 }
 
-async function play(m) {
+function play(m) {
   if (!audioEnabled || !audioCtx) return;
 
-  if (audioCtx.state === 'suspended') {
-    try { await audioCtx.resume(); } catch { return; }
-  }
-
-  // If the performer is muted, never let leftover chunks build a queue.
-  if (!lastAudioStatus) {
-    resetAudioQueue();
-    return;
-  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
 
   const now = audioCtx.currentTime;
 
-  // If audio has drifted into a delayed queue, kill the queue and restart near-live.
-  if (!nextTime || nextTime < now || nextTime - now > MAX_LEAD_SECONDS) {
+  // If queued audio is too far ahead, dump it so delay never builds up.
+  if (!nextTime || nextTime < now || nextTime - now > 0.35) {
     resetAudioQueue();
   }
 
-  const bytes = Uint8Array.from(atob(m.data), (c) => c.charCodeAt(0));
+  const bytes = Uint8Array.from(atob(m.data), c => c.charCodeAt(0));
   const pcm = new Int16Array(bytes.buffer);
   const buf = audioCtx.createBuffer(1, pcm.length, m.sampleRate || 16000);
   const ch = buf.getChannelData(0);
 
-  for (let i = 0; i < pcm.length; i++) {
-    ch[i] = pcm[i] / 32768;
-  }
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
 
   const src = audioCtx.createBufferSource();
   src.buffer = buf;
   src.connect(audioCtx.destination);
 
-  activeSources.add(src);
-  src.onended = () => {
-    activeSources.delete(src);
-    try { src.disconnect(); } catch {}
-  };
+  scheduledSources.add(src);
+  src.onended = () => scheduledSources.delete(src);
 
-  const startAt = Math.max(nextTime, audioCtx.currentTime + START_BUFFER_SECONDS);
-  src.start(startAt);
-  nextTime = startAt + buf.duration;
-
-  // Hard cap: never let queue grow beyond near-live.
-  if (nextTime - audioCtx.currentTime > MAX_LEAD_SECONDS) {
-    resetAudioQueue();
-  }
+  nextTime = Math.max(nextTime, audioCtx.currentTime + 0.03);
+  src.start(nextTime);
+  nextTime += buf.duration;
 }
-
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && audioCtx && audioEnabled) {
-    audioCtx.resume().then(resetAudioQueue).catch(() => {});
-  }
-});
 
 connect();
